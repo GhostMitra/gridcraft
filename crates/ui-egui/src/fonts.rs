@@ -32,6 +32,17 @@ pub struct Face {
     pub weight: f32,
     /// Whether the style name reads as italic or oblique.
     pub italic: bool,
+    /// Position in the browser queryLocalFonts() array, when discovered on web.
+    pub js_index: u32,
+    /// PostScript name reported by queryLocalFonts() on web, or empty.
+    pub postscript_name: String,
+}
+
+impl Face {
+    /// Creates a web-discovered face (bytes fetched separately on demand).
+    pub fn new_web(family: String, js_index: u32, style: &str, postscript_name: String) -> Self {
+        Self { family, path: PathBuf::new(), index: 0, weight: style_weight(style), italic: style_italic(style), js_index, postscript_name }
+    }
 }
 
 /// The font folders of the platform (the system's and the user's). Empty on wasm.
@@ -67,8 +78,7 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
 }
 
 /// Weight implied by a style name (`"Bold"` → 700, `"Light"` → 300).
-#[cfg(not(target_arch = "wasm32"))]
-fn style_weight(style: &str) -> f32 {
+pub fn style_weight(style: &str) -> f32 {
     let s: String = style.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
     const TABLE: &[(&str, f32)] = &[
         ("hairline", 100.0),
@@ -89,8 +99,7 @@ fn style_weight(style: &str) -> f32 {
 }
 
 /// Whether a style name reads as italic or oblique.
-#[cfg(not(target_arch = "wasm32"))]
-fn style_italic(style: &str) -> bool {
+pub fn style_italic(style: &str) -> bool {
     let s: String = style.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
     s.contains("italic") || s.contains("oblique")
 }
@@ -144,13 +153,22 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
             }
             let Ok(data) = std::fs::read(&path) else { continue };
             for (index, family, style) in file_faces(&data) {
-                out.push(Face { family, path: path.clone(), index, weight: style_weight(&style), italic: style_italic(&style) });
+                out.push(Face {
+                    family,
+                    path: path.clone(),
+                    index,
+                    weight: style_weight(&style),
+                    italic: style_italic(&style),
+                    js_index: 0,
+                    postscript_name: String::new(),
+                });
             }
         }
     }
     out
 }
 
+/// On WebAssembly, returns an empty list because the local file system is not accessible.
 #[cfg(target_arch = "wasm32")]
 pub fn scan_dirs(_dirs: &[PathBuf]) -> Vec<Face> {
     Vec::new()
@@ -255,9 +273,175 @@ fn pick_face(faces: &[Face], bold: bool, italic: bool) -> Option<&Face> {
 }
 
 /// A stable key for a face's font data, unique per file/index within the process.
-fn face_key(family: &str, face: &Face) -> String {
-    let file = face.path.file_name().and_then(|s| s.to_str()).unwrap_or("font");
-    format!("fnt-src:{family}:{file}:{}", face.index)
+fn face_key(_family: &str, face: &Face) -> String {
+    let fam = face.family.to_ascii_lowercase();
+    if face.path.as_os_str().is_empty() {
+        format!("fnt-src:{fam}:web:{}", face.js_index)
+    } else {
+        let file = face.path.file_name().and_then(|s| s.to_str()).unwrap_or("font");
+        format!("fnt-src:{fam}:{file}:{}", face.index)
+    }
+}
+
+static BYTES_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Current generation of stored in-memory face bytes. Increments every time new font bytes are stored.
+pub fn bytes_generation() -> u64 {
+    BYTES_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Bumps the in-memory face bytes generation counter.
+pub fn bump_bytes_generation() {
+    BYTES_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
+}
+
+/// Validate whether font file bytes parse successfully with skrifa at the given face index.
+pub fn is_valid_font_bytes(bytes: &[u8], index: u32) -> bool {
+    skrifa::FontRef::from_index(bytes, index).is_ok()
+}
+
+static IN_FLIGHT_FACES: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
+
+/// Global registry tracking faces currently being fetched over network or IPC.
+fn in_flight_faces() -> &'static std::sync::RwLock<HashSet<String>> {
+    IN_FLIGHT_FACES.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
+}
+
+/// Marks a face as being fetched. Returns false if it was already in flight.
+pub fn mark_face_in_flight(family: &str, face: &Face) -> bool {
+    let key = face_key(family, face);
+    in_flight_faces().write().unwrap_or_else(|e| e.into_inner()).insert(key)
+}
+
+/// Clears in-flight status for a face.
+pub fn clear_face_in_flight(family: &str, face: &Face) {
+    let key = face_key(family, face);
+    in_flight_faces().write().unwrap_or_else(|e| e.into_inner()).remove(&key);
+}
+
+/// Whether a face is currently being fetched.
+pub fn is_face_in_flight(family: &str, face: &Face) -> bool {
+    let key = face_key(family, face);
+    in_flight_faces().read().unwrap_or_else(|e| e.into_inner()).contains(&key)
+}
+
+/// Cached in-memory font file bytes and resolved collection face index.
+#[derive(Clone)]
+struct InMemoryFace {
+    bytes: Vec<u8>,
+    index: u32,
+}
+
+static IN_MEMORY_FACES: OnceLock<std::sync::RwLock<std::collections::HashMap<String, InMemoryFace>>> = OnceLock::new();
+
+/// Global registry caching in-memory font file bytes.
+fn in_memory_faces() -> &'static std::sync::RwLock<std::collections::HashMap<String, InMemoryFace>> {
+    IN_MEMORY_FACES.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Stores font file bytes for an in-memory or web-loaded face after verifying they parse.
+pub fn store_face_bytes(family: &str, face: &Face, bytes: Vec<u8>) -> bool {
+    if !is_valid_font_bytes(&bytes, face.index) {
+        log::warn!("dropping unparseable font bytes for family {family} (face index {})", face.index);
+        return false;
+    }
+    let key = face_key(family, face);
+    in_memory_faces().write().unwrap_or_else(|e| e.into_inner()).insert(key, InMemoryFace { bytes, index: face.index });
+    bump_bytes_generation();
+    true
+}
+
+/// Whether bytes have already been fetched and cached for this face.
+pub fn has_face_bytes(family: &str, face: &Face) -> bool {
+    let key = face_key(family, face);
+    in_memory_faces().read().unwrap_or_else(|e| e.into_inner()).contains_key(&key)
+}
+
+/// Initializes the installed face catalog (used on wasm after Font Access API query).
+pub fn init_catalog(faces: Vec<Face>) -> bool {
+    CATALOG.set(faces).is_ok()
+}
+
+/// If `bytes` is a font collection (TTC/OTC) and `postscript_name` is non-empty, finds the face
+/// index matching OpenType Name ID 6 (`POSTSCRIPT_NAME`). Returns `0` if not a collection or not found.
+pub fn resolve_collection_face_index(bytes: &[u8], postscript_name: &str) -> u32 {
+    use skrifa::raw::FileRef;
+    use skrifa::{MetadataProvider, string::StringId};
+
+    if postscript_name.is_empty() {
+        return 0;
+    }
+    match FileRef::new(bytes) {
+        Ok(FileRef::Collection(collection)) => (0..collection.len())
+            .find(|&i| {
+                skrifa::FontRef::from_index(bytes, i)
+                    .ok()
+                    .and_then(|f| f.localized_strings(StringId::POSTSCRIPT_NAME).english_or_first())
+                    .is_some_and(|name| name.to_string().eq_ignore_ascii_case(postscript_name))
+            })
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Whether `bytes` represents an OpenType or TrueType font collection (TTC/OTC).
+pub fn is_collection_font_bytes(bytes: &[u8]) -> bool {
+    matches!(skrifa::raw::FileRef::new(bytes), Ok(skrifa::raw::FileRef::Collection(_)))
+}
+
+/// Stores collection bytes for any sibling faces in `faces` whose `postscript_name` matches
+/// a face in the collection `bytes`.
+pub fn store_collection_sibling_faces(faces: &[Face], bytes: &[u8]) {
+    use skrifa::raw::FileRef;
+    use skrifa::{MetadataProvider, string::StringId};
+
+    let Ok(FileRef::Collection(collection)) = FileRef::new(bytes) else {
+        return;
+    };
+
+    let collection_names: Vec<(u32, String)> = (0..collection.len())
+        .filter_map(|i| {
+            let f = skrifa::FontRef::from_index(bytes, i).ok()?;
+            let ps = f.localized_strings(StringId::POSTSCRIPT_NAME).english_or_first()?.to_string();
+            Some((i, ps))
+        })
+        .collect();
+
+    for face in faces {
+        if face.postscript_name.is_empty() || has_face_bytes(&face.family, face) {
+            continue;
+        }
+        if let Some((idx, _)) = collection_names.iter().find(|(_, ps)| ps.eq_ignore_ascii_case(&face.postscript_name)) {
+            let mut resolved = face.clone();
+            resolved.index = *idx;
+            if is_valid_font_bytes(bytes, resolved.index) {
+                store_face_bytes(&face.family, &resolved, bytes.to_vec());
+            }
+            clear_face_in_flight(&face.family, face);
+        }
+    }
+}
+
+/// Returns the deduplicated list of faces for `family` that [`bind_faces`] selects across its four roles.
+pub fn needed_faces(family: &str) -> Vec<Face> {
+    let faces = faces_of(family);
+    if faces.is_empty() {
+        return Vec::new();
+    }
+    let mut selected: Vec<Face> = Vec::new();
+    for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
+        if let Some(primary) = pick_face(&faces, bold, italic).filter(|primary| {
+            !selected.iter().any(|f| f.family.eq_ignore_ascii_case(&primary.family) && f.index == primary.index && f.js_index == primary.js_index)
+        }) {
+            selected.push(primary.clone());
+        }
+        if let Some(regular) = pick_face(&faces, false, false).filter(|regular| {
+            !selected.iter().any(|f| f.family.eq_ignore_ascii_case(&regular.family) && f.index == regular.index && f.js_index == regular.js_index)
+        }) {
+            selected.push(regular.clone());
+        }
+    }
+    selected
 }
 
 /// Bind one installed family's faces into `fonts`, one egui family per cell role, and return the
@@ -282,10 +466,16 @@ pub fn bind_faces(fonts: &mut egui::FontDefinitions, family: &str, faces: &[Face
             if chain.contains(&key) {
                 continue;
             }
-            let Ok(bytes) = std::fs::read(&face.path) else { continue };
-            let mut fd = egui::FontData::from_owned(bytes);
-            fd.index = face.index;
-            fonts.font_data.entry(key.clone()).or_insert_with(|| std::sync::Arc::new(fd));
+            if !fonts.font_data.contains_key(&key) {
+                let entry = match std::fs::read(&face.path) {
+                    Ok(bytes) => Some((bytes, face.index)),
+                    Err(_) => in_memory_faces().read().unwrap_or_else(|e| e.into_inner()).get(&key).map(|im| (im.bytes.clone(), im.index)),
+                };
+                let Some((bytes, index)) = entry else { continue };
+                let mut fd = egui::FontData::from_owned(bytes);
+                fd.index = index;
+                fonts.font_data.insert(key.clone(), std::sync::Arc::new(fd));
+            }
             chain.push(key);
         }
         if chain.is_empty() {
@@ -400,6 +590,7 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    /// Tests that binding an installed family binds all four cell roles and skips missing faces.
     #[test]
     fn binding_a_family_binds_all_four_roles_and_never_stores_missing_data() {
         let dir = std::env::temp_dir().join(format!("gridcraft-fonts-bind-{}", std::process::id()));
@@ -407,7 +598,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("Ubuntu-Light.ttf");
         std::fs::write(&path, epaint_default_fonts::UBUNTU_LIGHT).expect("write");
-        let face = Face { family: "Ubuntu".into(), path, index: 0, weight: 300.0, italic: false };
+        let face = Face { family: "Ubuntu".into(), path, index: 0, weight: 300.0, italic: false, js_index: 0, postscript_name: String::new() };
 
         let mut fonts = egui::FontDefinitions::default();
         let bound = bind_faces(&mut fonts, "Ubuntu", std::slice::from_ref(&face));
@@ -419,5 +610,95 @@ mod tests {
         // A family with no faces binds nothing and never touches the map.
         assert!(bind_faces(&mut fonts, "No Such Font", &[]).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Tests that binding an in-memory face binds all cell roles into egui definitions.
+    #[test]
+    fn binding_in_memory_face_binds_roles() {
+        let face = Face::new_web("TestWebFont".into(), 0, "Regular", "TestWebFont-Regular".into());
+        assert!(store_face_bytes("TestWebFont", &face, epaint_default_fonts::UBUNTU_LIGHT.to_vec()));
+        assert!(has_face_bytes("TestWebFont", &face));
+
+        let mut fonts = egui::FontDefinitions::default();
+        let bound = bind_faces(&mut fonts, "TestWebFont", std::slice::from_ref(&face));
+        assert_eq!(bound.len(), 4);
+        for key in &bound {
+            let chain = fonts.families.get(&egui::FontFamily::Name(key.as_str().into())).expect("role family");
+            assert!(chain.iter().all(|k| fonts.font_data.contains_key(k)), "every chained key has data");
+        }
+    }
+
+    /// Tests that invalid font bytes fail validation and are never stored into memory.
+    #[test]
+    fn invalid_font_bytes_are_rejected_and_never_stored() {
+        let face = Face::new_web("BadFont".into(), 42, "Regular", "BadFont-Regular".into());
+        let bad_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        assert!(!is_valid_font_bytes(&bad_bytes, face.index));
+        let stored = store_face_bytes("BadFont", &face, bad_bytes);
+        assert!(!stored);
+        assert!(!has_face_bytes("BadFont", &face));
+
+        let mut fonts = egui::FontDefinitions::default();
+        let bound = bind_faces(&mut fonts, "BadFont", std::slice::from_ref(&face));
+        assert!(bound.is_empty(), "invalid face binds nothing");
+    }
+
+    /// Tests in-flight tracking flags and byte generation counter increments.
+    #[test]
+    fn in_flight_tracking_and_generation_counter() {
+        let face = Face::new_web("AsyncFont".into(), 1, "Bold", "AsyncFont-Bold".into());
+        assert!(!is_face_in_flight("AsyncFont", &face));
+
+        assert!(mark_face_in_flight("AsyncFont", &face));
+        assert!(is_face_in_flight("AsyncFont", &face));
+        assert!(!mark_face_in_flight("AsyncFont", &face));
+
+        clear_face_in_flight("AsyncFont", &face);
+        assert!(!is_face_in_flight("AsyncFont", &face));
+
+        let gen_before = bytes_generation();
+        assert!(store_face_bytes("AsyncFont", &face, epaint_default_fonts::UBUNTU_LIGHT.to_vec()));
+        let gen_after = bytes_generation();
+        assert!(gen_after > gen_before, "storing valid bytes bumps generation");
+    }
+
+    /// Tests collection face detection, index resolution, and needed_faces selection.
+    #[test]
+    fn collection_detection_and_needed_faces() {
+        let bytes = epaint_default_fonts::UBUNTU_LIGHT;
+        assert!(!is_collection_font_bytes(bytes), "single ttf is not a collection");
+        assert_eq!(resolve_collection_face_index(bytes, "Ubuntu-Light"), 0);
+
+        let faces = vec![
+            Face::new_web("MultiFace".into(), 0, "Regular", "MultiFace-Regular".into()),
+            Face::new_web("MultiFace".into(), 1, "Bold", "MultiFace-Bold".into()),
+            Face::new_web("MultiFace".into(), 2, "Italic", "MultiFace-Italic".into()),
+            Face::new_web("MultiFace".into(), 3, "Light", "MultiFace-Light".into()),
+        ];
+        let regular = pick_face(&faces, false, false).unwrap();
+        assert_eq!(regular.js_index, 0);
+        let bold = pick_face(&faces, true, false).unwrap();
+        assert_eq!(bold.js_index, 1);
+    }
+
+    /// Tests that a web face stored with a resolved collection index matches catalog lookups and binds with the collection index.
+    #[test]
+    fn collection_face_storage_matches_catalog_lookup() {
+        // In the catalog, web faces start with index: 0, js_index: 3:
+        let catalog_face = Face::new_web("CollectionFamily".into(), 3, "Bold", "CollectionFamily-Bold".into());
+        assert_eq!(catalog_face.index, 0);
+
+        // When bytes arrive, resolved face retains js_index: 3:
+        let mut resolved_face = catalog_face.clone();
+        resolved_face.index = 0;
+        assert!(store_face_bytes("CollectionFamily", &resolved_face, epaint_default_fonts::UBUNTU_LIGHT.to_vec()));
+
+        // Catalog face (with index 0) must return true for has_face_bytes:
+        assert!(has_face_bytes("CollectionFamily", &catalog_face));
+
+        // Binding the catalog face must succeed:
+        let mut fonts = egui::FontDefinitions::default();
+        let bound = bind_faces(&mut fonts, "CollectionFamily", std::slice::from_ref(&catalog_face));
+        assert_eq!(bound.len(), 4);
     }
 }

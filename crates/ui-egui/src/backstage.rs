@@ -1,4 +1,4 @@
-//! File tab Backstage view (#174): a full-window page that replaces the ribbon, formula bar, grid
+//! File tab Backstage view (#174): a full-window page that replaces the title bar, ribbon, formula bar, grid
 //! and sheet tabs until Esc or the back arrow returns to the sheet.
 //!
 //! A navigation column on the left picks a page (Home, New, Open, Info, Save As, Print, Export,
@@ -145,7 +145,7 @@ struct Outcome {
     page: Option<Page>,
 }
 
-/// Draws the Backstage view in place of the ribbon, formula bar, grid and sheet tabs.
+/// Draws the Backstage view in place of the title bar, ribbon, formula bar, grid and sheet tabs.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some(mut bs) = app.backstage.take() else { return };
     let ctx = ui.ctx().clone();
@@ -411,6 +411,7 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
 
 /// What the file system said about a recent workbook.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 enum Modified {
     /// When it was last changed, in seconds since 1970.
     At(f64),

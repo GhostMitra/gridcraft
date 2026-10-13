@@ -216,7 +216,7 @@ pub struct SheetApp {
     pub editor: Option<editor::EditState>,
     pub text_box_editor: Option<text_box::EditState>,
     pub dialog: Option<dialogs::Dialog>,
-    /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
+    /// The File tab's Backstage view, when open (UI-only; replaces the title bar, ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,
     pub message: Option<(String, String)>,
     pub toast: Option<(String, f64)>,
@@ -1103,14 +1103,12 @@ impl SheetApp {
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
         let t = theme::Tokens::get(&ctx);
-        if self.backstage.is_none() {
-            self.ribbon_keys(&ctx);
-        }
-        ribbon::title_bar(self, ui);
         if self.backstage.is_some() {
-            // File tab: the Backstage view replaces everything below the title bar.
+            // File tab: the Backstage view is full screen, replacing the title bar, ribbon, grid and tabs.
             backstage::show(self, ui);
         } else {
+            self.ribbon_keys(&ctx);
+            ribbon::title_bar(self, ui);
             ribbon::show(self, ui);
             widgets::notice_bar(self, ui);
             if self.session.prefs.formula_bar {

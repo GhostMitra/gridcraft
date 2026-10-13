@@ -962,6 +962,16 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
     if ui.checkbox(&mut formula_bar, lang.tr("Show formula bar")).changed() {
         app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
     }
+    let mut start_screen = app.ui.start_screen;
+    if ui
+        .checkbox(&mut start_screen, lang.tr("Show the Start screen when this application starts"))
+        .on_hover_text(lang.tr(
+            "On: GridCraft opens on File › Home, with a blank workbook, the templates and your recent workbooks. Off: it opens a blank workbook.",
+        ))
+        .changed()
+    {
+        app.run_or_alert("ui.startScreen", json!({"value": start_screen}));
+    }
     ui.add_space(18.0);
     section(ui, lang, "Options|Editing");
     let mut autocomplete = app.ui.autocomplete;

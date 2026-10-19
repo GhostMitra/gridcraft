@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="56 24 912 960" width="456" height="480" role="img" aria-labelledby="t d">
+  <title id="t">GridCraft</title>
+  <desc id="d">An animated ledger page with spreadsheet grid and selection, forming the GridCraft logo.</desc>
+  <defs>
+    <linearGradient id="tile-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#24b162"/>
+      <stop offset="100%" stop-color="#147c40"/>
+    </linearGradient>
+    <radialGradient id="gfade" cx="512" cy="460" r="540" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset=".65" stop-color="#fff" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="gmask" maskUnits="userSpaceOnUse" x="-100" y="-100" width="1300" height="1300">
+      <rect x="-100" y="-100" width="1300" height="1300" fill="url(#gfade)"/>
+    </mask>
+    <clipPath id="tile">
+      <rect width="512" height="512" rx="112"/>
+    </clipPath>
+  </defs>
+  <style>
+    :root { --grid: #1f9d55; --word: #107c41; --line: #0b0b0c; --accent: #1f9d55; --paper: #efe9dc; }
+    @media (prefers-color-scheme: dark) {
+      :root { --grid: #2e6644; --word: #5cc587; }
+    }
+    .grid { stroke: var(--grid); stroke-width: 2.2; fill: none; opacity: .28; }
+    .word { font: 700 64px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--word); letter-spacing: .02em; }
+    .all   { animation: all 5.4s linear infinite; }
+    .gridg { animation: gridin 5.4s ease-out infinite; }
+    .mark  { transform-origin: 512px 396px; animation: mark 5.4s cubic-bezier(.3,1.3,.5,1) infinite; }
+    .page  { transform-origin: 256px 268px; animation: page 5.4s ease-out infinite; }
+    .header { animation: header 5.4s ease-out infinite; }
+    .lines { animation: lines 5.4s ease-out infinite; }
+    .cell  { transform-origin: 284px 273px; animation: cell 5.4s cubic-bezier(.2,1.2,.4,1) infinite; }
+    .total { animation: total 5.4s ease-out infinite; }
+    .wordg { animation: wordg 5.4s ease-out infinite; }
+
+    @keyframes all    { 0% { opacity: 0; } 2%, 96% { opacity: 1; } 99.5%, 100% { opacity: 0; } }
+    @keyframes gridin { 0% { opacity: 0; } 7%, 100% { opacity: 1; } }
+    @keyframes mark   { 0%, 2% { opacity: 0; transform: scale(.84); } 12%, 100% { opacity: 1; transform: scale(1); } }
+    @keyframes page   { 0%, 8% { opacity: 0; transform: translateY(16px); } 18%, 100% { opacity: 1; transform: translateY(0); } }
+    @keyframes header { 0%, 16% { opacity: 0; } 24%, 100% { opacity: 1; } }
+    @keyframes lines  { 0%, 22% { opacity: 0; } 30%, 100% { opacity: 1; } }
+    @keyframes cell   { 0%, 30% { opacity: 0; transform: scale(.88); } 38%, 100% { opacity: 1; transform: scale(1); } }
+    @keyframes total  { 0%, 36% { opacity: 0; } 44%, 100% { opacity: 1; } }
+    @keyframes wordg  { 0%, 12% { opacity: 0; transform: translateY(8px); } 22%, 100% { opacity: 1; transform: translateY(0); } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .all, .gridg, .mark, .page, .header, .lines, .cell, .total, .wordg { animation: none; opacity: 1; transform: none; }
+    }
+  </style>
+  <g class="all">
+    <g mask="url(#gmask)">
+      <path class="grid gridg" d="
+        M-40 40H1064 M-40 80H1064 M-40 120H1064 M-40 160H1064 M-40 200H1064 M-40 240H1064 M-40 280H1064 M-40 320H1064
+        M-40 360H1064 M-40 400H1064 M-40 440H1064 M-40 480H1064 M-40 520H1064 M-40 560H1064 M-40 600H1064 M-40 640H1064
+        M-40 680H1064 M-40 720H1064 M-40 760H1064 M-40 800H1064 M-40 840H1064 M-40 880H1064 M-40 920H1064
+        M16 -40V1000 M72 -40V1000 M128 -40V1000 M184 -40V1000 M240 -40V1000 M296 -40V1000 M352 -40V1000 M408 -40V1000
+        M464 -40V1000 M520 -40V1000 M576 -40V1000 M632 -40V1000 M688 -40V1000 M744 -40V1000 M800 -40V1000 M856 -40V1000
+        M912 -40V1000 M968 -40V1000 M1024 -40V1000"/>
+    </g>
+    <g class="mark" transform="translate(256, 140)">
+      <g clip-path="url(#tile)">
+        <rect width="512" height="512" fill="url(#tile-grad)"/>
+        <g transform="rotate(-6 256 268)" stroke="#0b0b0c" stroke-linejoin="round" stroke-linecap="round">
+          <!-- page with folded top-right corner -->
+          <path class="page" d="M112 76 H336 L404 144 V440 H112 Z" fill="#efe9dc" stroke-width="14"/>
+          <path class="page" d="M336 76 V144 H404" fill="none" stroke-width="12"/>
+          <!-- title lines -->
+          <path class="page" d="M146 106 H272 M146 130 H232" stroke-width="12"/>
+          <!-- header row and row-number column -->
+          <path class="header" d="M112 164 H404 V204 H164 V440 H112 Z" fill="#1f9d55" stroke="none"/>
+          <!-- grid -->
+          <path class="lines" d="M112 164 H404 M112 204 H404 M112 250 H404 M112 296 H404 M112 342 H404 M112 388 H404
+                   M164 164 V440 M244 164 V440 M324 164 V440" fill="none" stroke-width="8"/>
+          <!-- the selected cell and its fill handle -->
+          <rect class="cell" x="244" y="250" width="80" height="46" fill="none" stroke-width="16"/>
+          <rect class="cell" x="312" y="284" width="24" height="24" fill="#0b0b0c" stroke="#efe9dc" stroke-width="5"/>
+          <!-- double rule under the total -->
+          <path class="total" d="M252 410 H316 M252 424 H316" stroke-width="7"/>
+        </g>
+      </g>
+    </g>
+    <text class="word wordg" x="512" y="776" text-anchor="middle">GridCraft</text>
+  </g>
+</svg>

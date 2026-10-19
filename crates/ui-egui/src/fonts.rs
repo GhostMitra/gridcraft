@@ -178,7 +178,9 @@ static CATALOG: OnceLock<Vec<Face>> = OnceLock::new();
 
 /// The catalog of installed faces, scanned on first use. Blocks until the scan finishes.
 pub fn catalog() -> &'static [Face] {
-    CATALOG.get_or_init(|| scan_dirs(&system_font_dirs()))
+    let cat = CATALOG.get_or_init(|| scan_dirs(&system_font_dirs()));
+    ensure_catalog_families(cat);
+    cat
 }
 
 /// The catalog if the scan has finished, else `None` — never blocks, for use while painting.
@@ -232,22 +234,59 @@ pub fn installed_among(names: &[String]) -> Vec<String> {
     out
 }
 
+static DEFAULT_FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
+static DEFAULT_COMBO_ITEMS: OnceLock<Vec<(&'static str, String)>> = OnceLock::new();
+static CATALOG_FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
+static CATALOG_COMBO_ITEMS: OnceLock<Vec<(&'static str, String)>> = OnceLock::new();
+
+fn default_families() -> &'static [String] {
+    DEFAULT_FAMILIES.get_or_init(|| crate::ribbon::FONTS.iter().map(|s| s.to_string()).collect())
+}
+
+fn default_combo_items() -> &'static [(&'static str, String)] {
+    DEFAULT_COMBO_ITEMS.get_or_init(|| default_families().iter().map(|f| (f.as_str(), f.clone())).collect())
+}
+
+fn ensure_catalog_families(cat: &[Face]) {
+    CATALOG_FAMILIES.get_or_init(|| {
+        let mut out: Vec<String> = crate::ribbon::FONTS.iter().map(|s| s.to_string()).collect();
+        let mut seen: HashSet<String> = out.iter().map(|s| s.to_lowercase()).collect();
+        let mut installed: Vec<String> = cat.iter().map(|f| f.family.clone()).collect();
+        installed.sort_by_key(|a| a.to_lowercase());
+        installed.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        for f in installed {
+            if seen.insert(f.to_lowercase()) {
+                out.push(f);
+            }
+        }
+        out
+    });
+    CATALOG_COMBO_ITEMS.get_or_init(|| {
+        let fams = CATALOG_FAMILIES.get().map(|v| v.as_slice()).unwrap_or(&[]);
+        fams.iter().map(|f| (f.as_str(), f.clone())).collect()
+    });
+}
+
 /// The font list a combo box shows: the standard [`crate::ribbon::FONTS`] names first (what Excel
 /// offers, and what we substitute), then every other installed family A–Z. Never blocks: until the
 /// background scan finishes it returns just the standard names.
-pub fn families() -> Vec<String> {
-    let mut out: Vec<String> = crate::ribbon::FONTS.iter().map(|s| s.to_string()).collect();
-    let Some(cat) = catalog_now() else { return out };
-    let mut seen: HashSet<String> = out.iter().map(|s| s.to_lowercase()).collect();
-    let mut installed: Vec<String> = cat.iter().map(|f| f.family.clone()).collect();
-    installed.sort_by_key(|a| a.to_lowercase());
-    installed.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-    for f in installed {
-        if seen.insert(f.to_lowercase()) {
-            out.push(f);
-        }
+pub fn families() -> &'static [String] {
+    if let Some(cat) = catalog_now() {
+        ensure_catalog_families(cat);
+        CATALOG_FAMILIES.get().map(|v| v.as_slice()).unwrap_or_else(default_families)
+    } else {
+        default_families()
     }
-    out
+}
+
+/// The pre-built combo items `(&str, String)` corresponding to [`families`], cached for UI dropdowns.
+pub fn family_combo_items() -> &'static [(&'static str, String)] {
+    if let Some(cat) = catalog_now() {
+        ensure_catalog_families(cat);
+        CATALOG_COMBO_ITEMS.get().map(|v| v.as_slice()).unwrap_or_else(default_combo_items)
+    } else {
+        default_combo_items()
+    }
 }
 
 /// The egui family name for one role of one family: `fnt:{family}:{b|n}{i|n}`.
@@ -326,9 +365,9 @@ pub fn is_face_in_flight(family: &str, face: &Face) -> bool {
 }
 
 /// Cached in-memory font file bytes and resolved collection face index.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct InMemoryFace {
-    bytes: Vec<u8>,
+    buffer: &'static [u8],
     index: u32,
 }
 
@@ -339,16 +378,41 @@ fn in_memory_faces() -> &'static std::sync::RwLock<std::collections::HashMap<Str
     IN_MEMORY_FACES.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
 }
 
+/// Stores an existing process-lifetime font buffer for an in-memory face after verifying it parses.
+pub fn store_face_buffer(family: &str, face: &Face, buffer: &'static [u8]) -> bool {
+    if !is_valid_font_bytes(buffer, face.index) {
+        log::warn!("dropping unparseable font bytes for family {family} (face index {})", face.index);
+        return false;
+    }
+    let key = face_key(family, face);
+    in_memory_faces().write().unwrap_or_else(|e| e.into_inner()).insert(key, InMemoryFace { buffer, index: face.index });
+    bump_bytes_generation();
+    true
+}
+
 /// Stores font file bytes for an in-memory or web-loaded face after verifying they parse.
+/// Reuses any existing process-lifetime buffer with identical contents to avoid duplicate allocations.
 pub fn store_face_bytes(family: &str, face: &Face, bytes: Vec<u8>) -> bool {
     if !is_valid_font_bytes(&bytes, face.index) {
         log::warn!("dropping unparseable font bytes for family {family} (face index {})", face.index);
         return false;
     }
     let key = face_key(family, face);
-    in_memory_faces().write().unwrap_or_else(|e| e.into_inner()).insert(key, InMemoryFace { bytes, index: face.index });
+    let mut map = in_memory_faces().write().unwrap_or_else(|e| e.into_inner());
+    let buffer = map
+        .values()
+        .find_map(|im| if im.buffer == bytes.as_slice() { Some(im.buffer) } else { None })
+        .unwrap_or_else(|| Box::leak(bytes.into_boxed_slice()));
+    map.insert(key, InMemoryFace { buffer, index: face.index });
+    drop(map);
     bump_bytes_generation();
     true
+}
+
+/// Returns the process-lifetime byte buffer for a cached face, if present.
+pub fn get_face_buffer(family: &str, face: &Face) -> Option<&'static [u8]> {
+    let key = face_key(family, face);
+    in_memory_faces().read().unwrap_or_else(|e| e.into_inner()).get(&key).map(|im| im.buffer)
 }
 
 /// Whether bytes have already been fetched and cached for this face.
@@ -359,7 +423,11 @@ pub fn has_face_bytes(family: &str, face: &Face) -> bool {
 
 /// Initializes the installed face catalog (used on wasm after Font Access API query).
 pub fn init_catalog(faces: Vec<Face>) -> bool {
-    CATALOG.set(faces).is_ok()
+    let ok = CATALOG.set(faces).is_ok();
+    if let Some(cat) = catalog_now().filter(|_| ok) {
+        ensure_catalog_families(cat);
+    }
+    ok
 }
 
 /// If `bytes` is a font collection (TTC/OTC) and `postscript_name` is non-empty, finds the face
@@ -390,18 +458,18 @@ pub fn is_collection_font_bytes(bytes: &[u8]) -> bool {
 }
 
 /// Stores collection bytes for any sibling faces in `faces` whose `postscript_name` matches
-/// a face in the collection `bytes`.
-pub fn store_collection_sibling_faces(faces: &[Face], bytes: &[u8]) {
+/// a face in the collection `buffer`. All matching sibling faces share `buffer` without cloning.
+pub fn store_collection_sibling_faces(faces: &[Face], buffer: &'static [u8]) {
     use skrifa::raw::FileRef;
     use skrifa::{MetadataProvider, string::StringId};
 
-    let Ok(FileRef::Collection(collection)) = FileRef::new(bytes) else {
+    let Ok(FileRef::Collection(collection)) = FileRef::new(buffer) else {
         return;
     };
 
     let collection_names: Vec<(u32, String)> = (0..collection.len())
         .filter_map(|i| {
-            let f = skrifa::FontRef::from_index(bytes, i).ok()?;
+            let f = skrifa::FontRef::from_index(buffer, i).ok()?;
             let ps = f.localized_strings(StringId::POSTSCRIPT_NAME).english_or_first()?.to_string();
             Some((i, ps))
         })
@@ -414,8 +482,8 @@ pub fn store_collection_sibling_faces(faces: &[Face], bytes: &[u8]) {
         if let Some((idx, _)) = collection_names.iter().find(|(_, ps)| ps.eq_ignore_ascii_case(&face.postscript_name)) {
             let mut resolved = face.clone();
             resolved.index = *idx;
-            if is_valid_font_bytes(bytes, resolved.index) {
-                store_face_bytes(&face.family, &resolved, bytes.to_vec());
+            if is_valid_font_bytes(buffer, resolved.index) {
+                store_face_buffer(&face.family, &resolved, buffer);
             }
             clear_face_in_flight(&face.family, face);
         }
@@ -467,13 +535,19 @@ pub fn bind_faces(fonts: &mut egui::FontDefinitions, family: &str, faces: &[Face
                 continue;
             }
             if !fonts.font_data.contains_key(&key) {
-                let entry = match std::fs::read(&face.path) {
-                    Ok(bytes) => Some((bytes, face.index)),
-                    Err(_) => in_memory_faces().read().unwrap_or_else(|e| e.into_inner()).get(&key).map(|im| (im.bytes.clone(), im.index)),
+                let entry: Option<egui::FontData> = match std::fs::read(&face.path) {
+                    Ok(bytes) => {
+                        let mut fd = egui::FontData::from_owned(bytes);
+                        fd.index = face.index;
+                        Some(fd)
+                    }
+                    Err(_) => in_memory_faces().read().unwrap_or_else(|e| e.into_inner()).get(&key).map(|im| {
+                        let mut fd = egui::FontData::from_static(im.buffer);
+                        fd.index = im.index;
+                        fd
+                    }),
                 };
-                let Some((bytes, index)) = entry else { continue };
-                let mut fd = egui::FontData::from_owned(bytes);
-                fd.index = index;
+                let Some(fd) = entry else { continue };
                 fonts.font_data.insert(key.clone(), std::sync::Arc::new(fd));
             }
             chain.push(key);
@@ -700,5 +774,37 @@ mod tests {
         let mut fonts = egui::FontDefinitions::default();
         let bound = bind_faces(&mut fonts, "CollectionFamily", std::slice::from_ref(&catalog_face));
         assert_eq!(bound.len(), 4);
+    }
+
+    /// Tests that storing identical font bytes reuses the cached process-lifetime buffer pointer without leaking.
+    #[test]
+    fn storing_identical_bytes_reuses_buffer_pointer() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let face1 = Face::new_web("BufferReuseFamily".into(), 0, "Regular", "BufferReuse-Regular".into());
+        let face2 = Face::new_web("BufferReuseFamily".into(), 1, "Bold", "BufferReuse-Bold".into());
+        assert!(store_face_bytes("BufferReuseFamily", &face1, epaint_default_fonts::UBUNTU_LIGHT.to_vec()));
+        let buf1 = get_face_buffer("BufferReuseFamily", &face1).expect("buffer 1");
+
+        // Storing for another face with same bytes reuses existing buffer:
+        assert!(store_face_bytes("BufferReuseFamily", &face2, epaint_default_fonts::UBUNTU_LIGHT.to_vec()));
+        let buf2 = get_face_buffer("BufferReuseFamily", &face2).expect("buffer 2");
+        assert!(std::ptr::eq(buf1.as_ptr(), buf2.as_ptr()), "buffer pointers must match");
+
+        // Overwriting an existing face with same bytes also preserves the same buffer:
+        assert!(store_face_bytes("BufferReuseFamily", &face1, epaint_default_fonts::UBUNTU_LIGHT.to_vec()));
+        let buf1_again = get_face_buffer("BufferReuseFamily", &face1).expect("buffer 1 again");
+        assert!(std::ptr::eq(buf1.as_ptr(), buf1_again.as_ptr()), "overwritten buffer pointer must match");
+    }
+
+    /// Tests that family_combo_items returns cached items matching families().
+    #[test]
+    fn family_combo_items_matches_families() {
+        let fams = families();
+        let items = family_combo_items();
+        assert_eq!(fams.len(), items.len());
+        for (f, (val, disp)) in fams.iter().zip(items.iter()) {
+            assert_eq!(f.as_str(), *val);
+            assert_eq!(f.as_str(), disp.as_str());
+        }
     }
 }

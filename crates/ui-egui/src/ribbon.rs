@@ -1083,11 +1083,12 @@ fn font_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {
     let resp = ui.add_sized([150.0, 24.0], egui::Button::new(egui::RichText::new(&truncated).font(font_id)));
     control_keytip(app, ui, &resp, "home.fontName");
     let forced = invoke(app, "home.fontName");
-    let fams = crate::fonts::families();
-    let items: Vec<(&str, String)> = fams.iter().map(|f| (f.as_str(), f.clone())).collect();
+    let popup_id = resp.id.with("popup");
+    let is_open = egui::Popup::is_id_open(ui.ctx(), popup_id) || resp.clicked() || forced;
+    let items: &[(&str, String)] = if is_open { crate::fonts::family_combo_items() } else { &[] };
     let load_action = app.services.load_system_fonts.as_ref();
     let can_load = load_action.is_some() && !crate::fonts::scan_done();
-    let res = editable_combo_ext(ui, &resp, "font", &name, &items, forced, |ui| {
+    let res = editable_combo_ext(ui, &resp, "font", &name, items, forced, |ui| {
         if can_load {
             ui.separator();
             if ui.button(crate::i18n::current(ui.ctx()).tr("Load System Fonts…")).clicked() {

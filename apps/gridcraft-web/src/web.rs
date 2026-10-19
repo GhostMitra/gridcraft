@@ -178,10 +178,13 @@ fn fetch_family_blobs(family: &str, ctx: &egui::Context) {
                         log::warn!("dropping unparseable font blob for {family} (face index {})", resolved_face.index);
                         return;
                     }
-                    let stored = gridcraft_ui_egui::fonts::store_face_bytes(&family, &resolved_face, bytes.clone());
-                    if gridcraft_ui_egui::fonts::is_collection_font_bytes(&bytes) {
-                        let needed = gridcraft_ui_egui::fonts::needed_faces(&family);
-                        gridcraft_ui_egui::fonts::store_collection_sibling_faces(&needed, &bytes);
+                    let is_collection = gridcraft_ui_egui::fonts::is_collection_font_bytes(&bytes);
+                    let stored = gridcraft_ui_egui::fonts::store_face_bytes(&family, &resolved_face, bytes);
+                    if is_collection {
+                        if let Some(buffer) = gridcraft_ui_egui::fonts::get_face_buffer(&family, &resolved_face) {
+                            let needed = gridcraft_ui_egui::fonts::needed_faces(&family);
+                            gridcraft_ui_egui::fonts::store_collection_sibling_faces(&needed, buffer);
+                        }
                     }
                     if stored {
                         ctx.request_repaint();

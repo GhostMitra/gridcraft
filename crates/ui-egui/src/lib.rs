@@ -543,8 +543,9 @@ impl SheetApp {
 
     /// Exports the active workbook in the given format and returns (name, bytes).
     pub fn get_workbook_bytes(&mut self, format: &str) -> Result<(String, Vec<u8>), String> {
-        let result = self.session.execute("file.saveBytes", json!({"format": format})).map_err(|e| format!("{e}"))?;
-        let name = result.get("name").and_then(Json::as_str).unwrap_or("Book1.xlsx").to_string();
+        let result = self.run("file.saveBytes", json!({"format": format}))?;
+        let ext = format.trim_start_matches('.');
+        let name = result.get("name").and_then(Json::as_str).map(ToString::to_string).unwrap_or_else(|| format!("Book1.{ext}"));
         let b64 = result.get("base64").and_then(Json::as_str).ok_or_else(|| "no base64 returned".to_string())?;
         let bytes = gridcraft_engine::io::base64_decode(b64).ok_or_else(|| "failed to decode base64".to_string())?;
         Ok((name, bytes))
@@ -1270,7 +1271,7 @@ pub fn now_ms() -> f64 {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        0.0
+        js_sys::Date::now()
     }
 }
 

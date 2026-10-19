@@ -103,7 +103,11 @@ struct WebShell {
 
 impl eframe::App for WebShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.recovery_checked {
+        if let Some(err) = self.storage.take_pending_error() {
+            self.app.toast = Some((err, gridcraft_ui_egui::now_ms()));
+        }
+
+        if !self.recovery_checked && self.storage.is_ready() {
             if let Some((name, bytes)) = self.storage.take_recovery() {
                 if self.bridge.is_none() && !query().contains("sample") {
                     self.inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name.clone(), bytes));
@@ -115,17 +119,20 @@ impl eframe::App for WebShell {
         }
 
         let now = gridcraft_ui_egui::now_ms();
-        if self.app.session.active().is_some_and(|d| d.is_dirty()) {
-            if now - self.last_autosave > 3000.0 {
-                let title = self.app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1.xlsx".into());
-                if let Ok((_, bytes)) = self.app.get_workbook_bytes("xlsx") {
-                    self.storage.autosave(&title, &bytes);
-                    self.last_autosave = now;
+        if self.bridge.is_none() && self.storage.is_ready() {
+            let any_dirty = self.app.session.documents().iter().any(|d| d.is_dirty());
+            if self.app.session.active().is_some_and(|d| d.is_dirty()) {
+                if now - self.last_autosave > 3000.0 {
+                    let title = self.app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1.xlsx".into());
+                    if let Ok((_, bytes)) = self.app.get_workbook_bytes("xlsx") {
+                        self.storage.autosave(&title, &bytes);
+                        self.last_autosave = now;
+                    }
                 }
+            } else if !any_dirty && self.last_autosave > 0.0 {
+                self.storage.clear_recovery();
+                self.last_autosave = 0.0;
             }
-        } else if self.app.session.active().is_some_and(|d| !d.is_dirty()) && self.last_autosave > 0.0 {
-            self.storage.clear_recovery();
-            self.last_autosave = 0.0;
         }
 
         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));

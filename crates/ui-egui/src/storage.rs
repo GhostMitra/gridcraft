@@ -36,9 +36,17 @@ pub trait LocalStorageService: Send + Sync {
     fn clear_recovery(&self);
     /// Take the recovered session if available on startup: returns (name, bytes).
     fn take_recovery(&self) -> Option<(String, Vec<u8>)>;
+    /// Returns true if storage has finished initializing.
+    fn is_ready(&self) -> bool {
+        true
+    }
     /// Returns true if OPFS is not available and storage is constrained to localStorage.
     fn is_local_storage_fallback(&self) -> bool {
         false
+    }
+    /// Take any pending storage error that occurred asynchronously.
+    fn take_pending_error(&self) -> Option<String> {
+        None
     }
 }
 

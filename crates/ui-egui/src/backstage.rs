@@ -116,6 +116,10 @@ pub struct Backstage {
     pub save_format: &'static str,
     /// Home and Open: when the recent workbooks were last changed.
     recent: RecentFiles,
+    /// Browser storage: workbook pending delete confirmation.
+    pub confirm_delete: Option<String>,
+    /// Browser storage: workbook pending overwrite confirmation.
+    pub confirm_replace: Option<(String, Vec<u8>)>,
 }
 
 /// Save As file types: (extension, label). The first is the workbook itself; the others are
@@ -134,6 +138,8 @@ impl Backstage {
             preview: None,
             save_format: "xlsx",
             recent: RecentFiles::default(),
+            confirm_delete: None,
+            confirm_replace: None,
         }
     }
 }
@@ -570,7 +576,7 @@ fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outc
             out.close = true;
         }
     }
-    browser_storage_list(app, ui, out);
+    browser_storage_list(app, ui, bs, out);
     ui.add_space(22.0);
     section(ui, lang, "Recent");
     recent_list(app, ui, bs, out, usize::MAX);
@@ -586,7 +592,7 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn browser_storage_list(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
+fn browser_storage_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let Some(storage) = app.services.storage.clone() else { return };
     let lang = app.ui.language;
     let t = Tokens::get(ui.ctx());
@@ -598,7 +604,6 @@ fn browser_storage_list(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
         return;
     }
     let width = ui.available_width().min(CONTENT_W);
-    let mut to_delete = None;
     let mut to_open = None;
     for wb in workbooks {
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
@@ -630,13 +635,38 @@ fn browser_storage_list(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
         }
         icons::paint(p, Rect::from_center_size(del_rect.center(), vec2(16.0, 16.0)), Icon::Close, t.text_dim);
         if del_resp.clicked() {
-            to_delete = Some(wb.name.clone());
+            bs.confirm_delete = Some(wb.name.clone());
         } else if resp.clicked() {
             to_open = Some(wb.name.clone());
         }
     }
-    if let Some(name) = to_delete {
-        let _ = storage.delete(&name);
+    if let Some(ref target) = bs.confirm_delete.clone() {
+        let mut confirmed = false;
+        let mut cancelled = false;
+        egui::Modal::new(egui::Id::new("confirm_delete_storage")).show(ui.ctx(), |ui| {
+            ui.set_width(340.0);
+            ui.label(RichText::new(lang.tr("Delete workbook?")).strong());
+            ui.add_space(6.0);
+            ui.label(format!("\"{}\" will be permanently deleted from browser storage.", target));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(lang.tr("Delete")).clicked() {
+                    confirmed = true;
+                }
+                if ui.button(lang.tr("Cancel")).clicked() {
+                    cancelled = true;
+                }
+            });
+        });
+        if confirmed {
+            if let Some(name) = bs.confirm_delete.take()
+                && let Err(e) = storage.delete(&name)
+            {
+                app.toast = Some((format!("Failed to delete {name}: {e}"), crate::now_ms()));
+            }
+        } else if cancelled {
+            bs.confirm_delete = None;
+        }
     }
     if let Some(name) = to_open {
         match storage.read(&name) {
@@ -769,22 +799,69 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
                 out.close = true;
             }
         }
-        if let Some(storage) = app.services.storage.clone() {
+        if let Some(storage) = app.services.storage.clone()
+            && !matches!(fmt, "html" | "pdf")
+        {
             ui.add_space(14.0);
             if square_button(ui, Icon::Save, lang.tr("Save locally")).clicked() && app.commit_edit(0, 0, false, false) {
                 match app.get_workbook_bytes(fmt) {
-                    Ok((name, bytes)) => match storage.save(&name, &bytes) {
-                        Ok(()) => {
-                            app.toast = Some((format!("Saved {name} to browser storage"), crate::now_ms()));
-                            out.close = true;
+                    Ok((name, bytes)) => {
+                        let is_active = app.session.active().is_some_and(|d| {
+                            d.display_title() == name
+                                || d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).is_some_and(|n| n == name.as_str())
+                        });
+                        let exists = storage.list().iter().any(|e| e.name.eq_ignore_ascii_case(&name));
+                        if exists && !is_active {
+                            bs.confirm_replace = Some((name, bytes));
+                        } else {
+                            match storage.save(&name, &bytes) {
+                                Ok(()) => {
+                                    app.toast = Some((format!("Saved {name} to browser storage"), crate::now_ms()));
+                                    out.close = true;
+                                }
+                                Err(e) => app.toast = Some((format!("Failed to save: {e}"), crate::now_ms())),
+                            }
                         }
-                        Err(e) => app.toast = Some((format!("Failed to save: {e}"), crate::now_ms())),
-                    },
+                    }
                     Err(e) => app.toast = Some((format!("Failed to encode: {e}"), crate::now_ms())),
                 }
             }
         }
     });
+    if let Some(storage) = app.services.storage.clone()
+        && let Some((target, _)) = bs.confirm_replace.clone()
+    {
+        let mut confirmed = false;
+        let mut cancelled = false;
+        egui::Modal::new(egui::Id::new("confirm_replace_storage")).show(ui.ctx(), |ui| {
+            ui.set_width(340.0);
+            ui.label(RichText::new(lang.tr("Replace existing workbook?")).strong());
+            ui.add_space(6.0);
+            ui.label(format!("\"{}\" already exists in browser storage. Do you want to replace it?", target));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(lang.tr("Replace")).clicked() {
+                    confirmed = true;
+                }
+                if ui.button(lang.tr("Cancel")).clicked() {
+                    cancelled = true;
+                }
+            });
+        });
+        if confirmed {
+            if let Some((name, bytes)) = bs.confirm_replace.take() {
+                match storage.save(&name, &bytes) {
+                    Ok(()) => {
+                        app.toast = Some((format!("Saved {name} to browser storage"), crate::now_ms()));
+                        out.close = true;
+                    }
+                    Err(e) => app.toast = Some((format!("Failed to save: {e}"), crate::now_ms())),
+                }
+            }
+        } else if cancelled {
+            bs.confirm_replace = None;
+        }
+    }
     ui.add_space(18.0);
     dim(ui, lang.tr("A CSV file, web page or PDF is a copy: the workbook keeps its own file."));
 }

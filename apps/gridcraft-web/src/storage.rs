@@ -97,20 +97,28 @@ async fn remove_opfs(name: &str) -> Result<(), String> {
 }
 
 pub struct WebStorage {
-    entries: Mutex<Vec<StoredWorkbook>>,
-    cache: Mutex<HashMap<String, Vec<u8>>>,
-    recovery: Mutex<Option<(String, Vec<u8>)>>,
-    fallback: AtomicBool,
+    entries: Arc<Mutex<Vec<StoredWorkbook>>>,
+    cache: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    recovery: Arc<Mutex<Option<(String, Vec<u8>)>>>,
+    pending_error: Arc<Mutex<Option<String>>>,
+    fallback: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
 }
 
 impl WebStorage {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            entries: Mutex::new(Vec::new()),
-            cache: Mutex::new(HashMap::new()),
-            recovery: Mutex::new(None),
-            fallback: AtomicBool::new(false),
+            entries: Arc::new(Mutex::new(Vec::new())),
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            recovery: Arc::new(Mutex::new(None)),
+            pending_error: Arc::new(Mutex::new(None)),
+            fallback: Arc::new(AtomicBool::new(false)),
+            ready: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Relaxed)
     }
 }
 
@@ -139,6 +147,9 @@ impl LocalStorageService for WebStorage {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             return Err("invalid file name: slashes not allowed".into());
         }
+        if name.eq_ignore_ascii_case(RECOVERY_NAME) || name.eq_ignore_ascii_case(RECOVERY_META_NAME) {
+            return Err("file name is reserved for recovery".into());
+        }
         let now = js_sys::Date::now();
         {
             let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
@@ -149,16 +160,27 @@ impl LocalStorageService for WebStorage {
             entries.retain(|e| e.name != name);
             entries.push(StoredWorkbook { name: name.clone(), size: bytes.len() as u64, modified: now });
         }
-        let fallback = self.fallback.load(Ordering::Relaxed);
+        if self.fallback.load(Ordering::Relaxed) {
+            let st = local()?;
+            if let Err(e) = st.set_item(&format!("{LOCAL_PREFIX}{name}"), &encode(bytes)) {
+                let err_msg = err(e);
+                self.cache.lock().unwrap_or_else(PoisonError::into_inner).remove(&name);
+                self.entries.lock().unwrap_or_else(PoisonError::into_inner).retain(|e| e.name != name);
+                return Err(format!("failed saving to localStorage: {err_msg}"));
+            }
+            return Ok(());
+        }
         let bytes_vec = bytes.to_vec();
         let name_clone = name.clone();
+        let cache_clone = self.cache.clone();
+        let entries_clone = self.entries.clone();
+        let error_clone = self.pending_error.clone();
         spawn_local(async move {
-            if fallback {
-                if let Ok(st) = local() {
-                    let _ = st.set_item(&format!("{LOCAL_PREFIX}{name_clone}"), &encode(&bytes_vec));
-                }
-            } else if let Err(e) = write_opfs(&name_clone, &bytes_vec).await {
+            if let Err(e) = write_opfs(&name_clone, &bytes_vec).await {
                 log::error!("failed writing OPFS file {name_clone}: {e}");
+                cache_clone.lock().unwrap_or_else(PoisonError::into_inner).remove(&name_clone);
+                entries_clone.lock().unwrap_or_else(PoisonError::into_inner).retain(|entry| entry.name != name_clone);
+                *error_clone.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("Failed to save {name_clone}: {e}"));
             }
         });
         Ok(())
@@ -236,6 +258,14 @@ impl LocalStorageService for WebStorage {
 
     fn take_recovery(&self) -> Option<(String, Vec<u8>)> {
         self.recovery.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Relaxed)
+    }
+
+    fn take_pending_error(&self) -> Option<String> {
+        self.pending_error.lock().unwrap_or_else(PoisonError::into_inner).take()
     }
 
     fn is_local_storage_fallback(&self) -> bool {
@@ -341,6 +371,7 @@ pub fn init(storage: Arc<WebStorage>, ctx: egui::Context) {
                 }
             }
         }
+        storage_clone.ready.store(true, Ordering::Relaxed);
         ctx.request_repaint();
     });
 }

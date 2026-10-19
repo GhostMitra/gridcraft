@@ -50,7 +50,7 @@ html, body {
 }
 
 .loading-logo {
-  width: min(65vmin, 260px);
+  width: min(75vmin, 320px);
   height: auto;
   display: block;
 }

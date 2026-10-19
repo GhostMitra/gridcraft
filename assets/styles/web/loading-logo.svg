@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 600" width="384" height="450" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1000" width="480" height="500" role="img" aria-labelledby="t d">
   <title id="t">GridCraft</title>
-  <desc id="d">An animated ledger page with spreadsheet grid, green header band, cell selection, and fill handle, forming the GridCraft logo.</desc>
+  <desc id="d">An animated ledger page with spreadsheet grid, green header band, cell selection, and fill handle, surrounded by a spreadsheet grid pattern forming the GridCraft logo.</desc>
   <defs>
     <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
     <linearGradient id="tile-grad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -11,28 +11,47 @@
       <stop offset="0%" stop-color="#22a85b"/>
       <stop offset="100%" stop-color="#107c41"/>
     </linearGradient>
+    <radialGradient id="gfade" cx="480" cy="440" r="460" gradientUnits="userSpaceOnUse">
+      <stop offset="0.2" stop-color="#fff"/>
+      <stop offset="0.65" stop-color="#fff" stop-opacity="0.45"/>
+      <stop offset="0.95" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="gmask" maskUnits="userSpaceOnUse" x="-100" y="-100" width="1200" height="1200">
+      <rect x="-100" y="-100" width="1200" height="1200" fill="url(#gfade)"/>
+    </mask>
   </defs>
   <style>
     :root {
+      --grid: #107c41;
       --word: #107c41;
     }
     @media (prefers-color-scheme: dark) {
       :root {
+        --grid: #5cc587;
         --word: #5cc587;
       }
+    }
+    .grid {
+      stroke: var(--grid);
+      stroke-width: 2.2;
+      fill: none;
+      opacity: 0.28;
     }
     .word {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       font-weight: 700;
-      font-size: 64px;
+      font-size: 68px;
       fill: var(--word);
       letter-spacing: -0.5px;
     }
     .all {
       animation: all-loop 5.2s linear infinite;
     }
+    .gridg {
+      animation: grid-in 5.2s ease-out infinite;
+    }
     .mark {
-      transform-origin: 256px 256px;
+      transform-origin: 480px 440px;
       animation: mark-in 5.2s cubic-bezier(0.2, 1.2, 0.4, 1) infinite;
     }
     .sheet {
@@ -53,7 +72,7 @@
       animation: total-in 5.2s ease-out infinite;
     }
     .wordg {
-      transform-origin: 256px 582px;
+      transform-origin: 480px 800px;
       animation: word-in 5.2s ease-out infinite;
     }
 
@@ -61,6 +80,10 @@
       0% { opacity: 0; }
       2.5%, 96.5% { opacity: 1; }
       99.5%, 100% { opacity: 0; }
+    }
+    @keyframes grid-in {
+      0% { opacity: 0; }
+      8%, 100% { opacity: 1; }
     }
     @keyframes mark-in {
       0%, 2% { opacity: 0; transform: scale(0.85); }
@@ -92,7 +115,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .all, .mark, .sheet, .header, .lines, .cell, .total, .wordg {
+      .all, .gridg, .mark, .sheet, .header, .lines, .cell, .total, .wordg {
         animation: none;
         opacity: 1;
         transform: none;
@@ -100,7 +123,19 @@
     }
   </style>
   <g class="all">
-    <g class="mark">
+    <!-- Surrounding spreadsheet grid pattern, centered on (480, 440) -->
+    <g mask="url(#gmask)">
+      <path class="grid gridg" d="
+        M0 40H960 M0 80H960 M0 120H960 M0 160H960 M0 200H960 M0 240H960 M0 280H960 M0 320H960 M0 360H960 M0 400H960
+        M0 440H960 M0 480H960 M0 520H960 M0 560H960 M0 600H960 M0 640H960 M0 680H960 M0 720H960 M0 760H960 M0 800H960
+        M0 840H960 M0 880H960 M0 920H960 M0 960H960
+        M40 0V1000 M80 0V1000 M120 0V1000 M160 0V1000 M200 0V1000 M240 0V1000 M280 0V1000 M320 0V1000 M360 0V1000 M400 0V1000
+        M440 0V1000 M480 0V1000 M520 0V1000 M560 0V1000 M600 0V1000 M640 0V1000 M680 0V1000 M720 0V1000 M760 0V1000 M800 0V1000
+        M840 0V1000 M880 0V1000 M920 0V1000"/>
+    </g>
+
+    <!-- Centered GridCraft Tile Logo (512x512) centered at (480, 440) -->
+    <g class="mark" transform="translate(224, 184)">
       <g clip-path="url(#tile)">
         <rect width="512" height="512" fill="url(#tile-grad)"/>
         <g transform="rotate(-6 256 268)" stroke="#0b0b0c" stroke-linejoin="round" stroke-linecap="round">
@@ -126,6 +161,8 @@
         </g>
       </g>
     </g>
-    <text class="word wordg" x="256" y="582" text-anchor="middle">GridCraft</text>
+
+    <!-- Wordmark centered beneath tile -->
+    <text class="word wordg" x="480" y="800" text-anchor="middle">GridCraft</text>
   </g>
 </svg>

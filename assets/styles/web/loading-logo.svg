@@ -45,40 +45,40 @@
       letter-spacing: -0.5px;
     }
     .all {
-      animation: all-loop 5.2s linear infinite;
+      animation: all-loop 3.8s linear infinite;
     }
     .gridg {
-      animation: grid-in 5.2s ease-out infinite;
+      animation: grid-in 3.8s ease-out infinite;
     }
     .mark {
       transform-origin: 480px 440px;
-      animation: mark-in 5.2s cubic-bezier(0.2, 1.2, 0.4, 1) infinite;
+      animation: mark-in 3.8s cubic-bezier(0.2, 1.2, 0.4, 1) infinite;
     }
     .sheet {
-      animation: sheet-in 5.2s ease-out infinite;
+      animation: sheet-in 3.8s ease-out infinite;
     }
     .header {
-      animation: header-in 5.2s ease-out infinite;
+      animation: header-in 3.8s ease-out infinite;
     }
     .lines {
-      animation: lines-in 5.2s ease-out infinite;
+      animation: lines-in 3.8s ease-out infinite;
     }
     .cell {
       transform-box: fill-box;
       transform-origin: center;
-      animation: cell-in 5.2s cubic-bezier(0.2, 1.3, 0.4, 1) infinite;
+      animation: cell-in 3.8s cubic-bezier(0.2, 1.3, 0.4, 1) infinite;
     }
     .total {
-      animation: total-in 5.2s ease-out infinite;
+      animation: total-in 3.8s ease-out infinite;
     }
     .wordg {
       transform-origin: 480px 800px;
-      animation: word-in 5.2s ease-out infinite;
+      animation: word-in 3.8s ease-out infinite;
     }
 
     @keyframes all-loop {
       0% { opacity: 0; }
-      2.5%, 96.5% { opacity: 1; }
+      2.5%, 96% { opacity: 1; }
       99.5%, 100% { opacity: 0; }
     }
     @keyframes grid-in {
@@ -91,27 +91,27 @@
     }
     @keyframes sheet-in {
       0%, 8% { opacity: 0; }
-      18%, 100% { opacity: 1; }
+      20%, 100% { opacity: 1; }
     }
     @keyframes header-in {
-      0%, 18% { opacity: 0; }
-      28%, 100% { opacity: 1; }
+      0%, 20% { opacity: 0; }
+      34%, 100% { opacity: 1; }
     }
     @keyframes lines-in {
-      0%, 28% { opacity: 0; }
-      38%, 100% { opacity: 1; }
+      0%, 34% { opacity: 0; }
+      48%, 100% { opacity: 1; }
     }
     @keyframes cell-in {
-      0%, 38% { opacity: 0; transform: scale(0.85); }
-      48%, 100% { opacity: 1; transform: scale(1); }
+      0%, 48% { opacity: 0; transform: scale(0.85); }
+      62%, 100% { opacity: 1; transform: scale(1); }
     }
     @keyframes total-in {
-      0%, 48% { opacity: 0; }
-      58%, 100% { opacity: 1; }
+      0%, 62% { opacity: 0; }
+      74%, 100% { opacity: 1; }
     }
     @keyframes word-in {
-      0%, 10% { opacity: 0; transform: translateY(8px); }
-      22%, 100% { opacity: 1; transform: translateY(0); }
+      0%, 12% { opacity: 0; transform: translateY(8px); }
+      24%, 100% { opacity: 1; transform: translateY(0); }
     }
 
     @media (prefers-reduced-motion: reduce) {

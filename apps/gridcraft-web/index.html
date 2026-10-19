@@ -39,12 +39,12 @@
       let targetPct = 20;
       let finished = false;
 
-      // Realistic stages while WebAssembly compiles & mounts
+      // Stages timed to smoothly pace with the 3.6s logo construction animation
       const stages = [
-        { afterMs: 300, pct: 40, msg: "Compiling WebAssembly modules\u2026" },
-        { afterMs: 800, pct: 68, msg: "Initializing graphics pipeline\u2026" },
-        { afterMs: 1400, pct: 88, msg: "Loading fonts & typography\u2026" },
-        { afterMs: 2000, pct: 95, msg: "Mounting spreadsheet engine\u2026" },
+        { afterMs: 350, pct: 28, msg: "Compiling WebAssembly modules\u2026" },
+        { afterMs: 1100, pct: 55, msg: "Initializing graphics pipeline\u2026" },
+        { afterMs: 1900, pct: 78, msg: "Loading fonts & typography\u2026" },
+        { afterMs: 2700, pct: 95, msg: "Mounting spreadsheet engine\u2026" },
       ];
 
       stages.forEach(function(s) {

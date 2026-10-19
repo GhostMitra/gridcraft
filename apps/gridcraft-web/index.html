@@ -11,6 +11,67 @@
 </head>
 <body>
   <canvas id="gridcraft_canvas"></canvas>
-  <div id="gridcraft_loading" role="status"><img src="loading-logo.svg" alt=""><span class="sr-only">Loading GridCraft&hellip;</span></div>
+  <div id="gridcraft_loading" role="status">
+    <div class="loading-container">
+      <div class="logo-box">
+        <img src="loading-logo.svg" alt="GridCraft" class="loading-logo">
+      </div>
+      <div class="app-subtitle">Clean-room, native spreadsheet</div>
+
+      <div class="progress-section">
+        <div class="progress-bar-track">
+          <div id="progress_bar" class="progress-bar-fill"></div>
+        </div>
+        <div class="progress-labels">
+          <span id="status_msg" class="status-msg">Starting GridCraft&hellip;</span>
+          <span id="progress_pct" class="progress-pct">0%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function() {
+      const barEl = document.getElementById("progress_bar");
+      const pctEl = document.getElementById("progress_pct");
+      const statusEl = document.getElementById("status_msg");
+
+      let currentPct = 6;
+      let targetPct = 20;
+      let finished = false;
+
+      // Realistic stages while WebAssembly compiles & mounts
+      const stages = [
+        { afterMs: 300, pct: 40, msg: "Compiling WebAssembly modules\u2026" },
+        { afterMs: 800, pct: 68, msg: "Initializing graphics pipeline\u2026" },
+        { afterMs: 1400, pct: 88, msg: "Loading fonts & typography\u2026" },
+        { afterMs: 2000, pct: 95, msg: "Mounting spreadsheet engine\u2026" },
+      ];
+
+      stages.forEach(function(s) {
+        setTimeout(function() {
+          if (!finished) {
+            targetPct = s.pct;
+            if (statusEl) statusEl.textContent = s.msg;
+          }
+        }, s.afterMs);
+      });
+
+      const progressInterval = setInterval(function() {
+        if (!finished && currentPct < targetPct) {
+          currentPct += Math.max(1, Math.floor((targetPct - currentPct) * 0.22));
+          if (barEl) barEl.style.width = currentPct + "%";
+          if (pctEl) pctEl.textContent = currentPct + "%";
+        }
+      }, 50);
+
+      window.gridcraftFinishLoading = function() {
+        finished = true;
+        clearInterval(progressInterval);
+        if (barEl) barEl.style.width = "100%";
+        if (pctEl) pctEl.textContent = "100%";
+        if (statusEl) statusEl.textContent = "Ready";
+      };
+    })();
+  </script>
 </body>
 </html>

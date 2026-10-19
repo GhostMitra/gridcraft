@@ -8,19 +8,23 @@ use wasm_bindgen::JsValue;
 const CANVAS_ID: &str = "gridcraft_canvas";
 const LOADING_ID: &str = "gridcraft_loading";
 
-/// The loading animation (assets/styles/web/loading-logo.svg) settles into the finished mark
-/// about 3.2 s after the page starts; this adds a short hold. The app doesn't land before it.
-const LOADING_MIN_MS: f64 = 3600.0;
+/// Minimum time the loading screen stays visible to show initial telemetry and progress.
+const LOADING_MIN_MS: f64 = 1200.0;
 /// The fade from the loading screen into the app.
 const LOADING_FADE_MS: i32 = 300;
 
-/// Take the loading screen away once the animation has played to the finished mark: wait out
+/// Take the loading screen away once the app is ready: finish progress, wait out
 /// what is left of `LOADING_MIN_MS`, fade it, then remove it.
 fn dismiss_loading(el: web_sys::Element) {
     let Some(window) = web_sys::window() else {
         el.remove();
         return;
     };
+    if let Ok(finish_val) = js_sys::Reflect::get(&window, &JsValue::from_str("gridcraftFinishLoading"))
+        && let Ok(func) = finish_val.dyn_into::<js_sys::Function>()
+    {
+        let _ = func.call0(&window);
+    }
     let now = window.performance().map_or(LOADING_MIN_MS, |p| p.now());
     let wait = (LOADING_MIN_MS - now).max(0.0) as i32;
     let fade = wasm_bindgen::closure::Closure::once_into_js(move || {

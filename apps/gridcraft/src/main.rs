@@ -302,6 +302,7 @@ fn main() -> eframe::Result<()> {
         session.new_workbook();
     }
     let mut app = SheetApp::new(session, services());
+    // Enable the splash screen; min_duration_ms starts when first painted, preserving visible duration.
     if std::env::var_os("GRIDCRAFT_NO_SPLASH").is_none() && !no_splash {
         app.enable_splash();
         if let Some(first) = files.first() {

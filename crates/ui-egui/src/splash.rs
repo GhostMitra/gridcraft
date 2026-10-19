@@ -33,15 +33,9 @@ impl Default for SplashState {
 }
 
 impl SplashState {
-    /// Creates a new splash state initialized at the current time with default durations.
+    /// Creates a new splash state initialized with default durations (start_ms begins on first paint).
     pub fn new() -> Self {
-        Self {
-            start_ms: crate::now_ms(),
-            min_duration_ms: 1000.0,
-            fade_duration_ms: 250.0,
-            dismiss_ms: None,
-            status: "Starting GridCraft…".to_string(),
-        }
+        Self { start_ms: 0.0, min_duration_ms: 1000.0, fade_duration_ms: 250.0, dismiss_ms: None, status: "Starting GridCraft…".to_string() }
     }
 
     /// Sets the status message displayed on the splash screen.
@@ -205,15 +199,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     // Check if splash state is set
     let Some(splash) = &mut app.splash else { return };
 
-    // Check for user dismiss interaction (mouse click or keypress)
-    let user_interacted = ui.input(|i| i.pointer.any_click() || !i.events.is_empty());
-    if user_interacted {
-        splash.dismiss(now);
-    }
-
-    // Auto-dismiss after min_duration_ms has elapsed
-    if now - splash.start_ms >= splash.min_duration_ms && splash.dismiss_ms.is_none() {
-        splash.dismiss(now);
+    // Record timestamp when the splash is first painted
+    if splash.start_ms <= 0.0 {
+        splash.start_ms = now;
     }
 
     let alpha = splash.alpha(now);
@@ -227,76 +215,107 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
 
     let screen = ui.max_rect();
     let t = Tokens::get(ui.ctx());
-    let p = ui.painter();
+    let mut clicked = false;
 
-    // 1. Semi-transparent backdrop overlay over entire window
-    let backdrop = if t.dark { Color32::from_black_alpha((160.0 * alpha) as u8) } else { Color32::from_black_alpha((70.0 * alpha) as u8) };
-    p.rect_filled(screen, CornerRadius::ZERO, backdrop);
+    egui::Area::new(egui::Id::new("splash_overlay")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ui.ctx(), |ui| {
+        let resp = ui.allocate_response(screen.size(), egui::Sense::click());
+        if resp.clicked() {
+            clicked = true;
+        }
+        let p = ui.painter();
 
-    // 2. Centered splash card
-    let card_w = (screen.width() - 32.0).clamp(280.0, 480.0);
-    let card_h = 240.0;
-    let card_rect = Rect::from_center_size(screen.center(), vec2(card_w, card_h));
+        // 1. Semi-transparent backdrop overlay over entire window
+        let backdrop = if t.dark { Color32::from_black_alpha((160.0 * alpha) as u8) } else { Color32::from_black_alpha((70.0 * alpha) as u8) };
+        p.rect_filled(screen, CornerRadius::ZERO, backdrop);
 
-    // Card drop shadow
-    let shadow_color = Color32::from_black_alpha((40.0 * alpha) as u8);
-    p.rect_filled(card_rect.translate(vec2(0.0, 6.0)), CornerRadius::same(12), shadow_color);
+        // 2. Centered splash card
+        let card_w = (screen.width() - 32.0).clamp(280.0, 480.0);
+        let card_h = 240.0;
+        let card_rect = Rect::from_center_size(screen.center(), vec2(card_w, card_h));
 
-    // Card background and border
-    let card_bg = if t.dark { Color32::from_rgb(0x2B, 0x2B, 0x2B) } else { Color32::WHITE };
-    p.rect_filled(card_rect, CornerRadius::same(12), apply_alpha(card_bg, alpha));
+        // Card drop shadow
+        let shadow_color = Color32::from_black_alpha((40.0 * alpha) as u8);
+        p.rect_filled(card_rect.translate(vec2(0.0, 6.0)), CornerRadius::same(12), shadow_color);
 
-    let border_color = if t.dark { Color32::from_white_alpha((28.0 * alpha) as u8) } else { Color32::from_black_alpha((20.0 * alpha) as u8) };
-    p.rect_stroke(card_rect, CornerRadius::same(12), Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
+        // Card background and border
+        let card_bg = if t.dark { Color32::from_rgb(0x2B, 0x2B, 0x2B) } else { Color32::WHITE };
+        p.rect_filled(card_rect, CornerRadius::same(12), apply_alpha(card_bg, alpha));
 
-    // 3. GridCraft App Logo (left side of card)
-    let logo_size = 76.0;
-    let logo_rect = Rect::from_min_size(pos2(card_rect.left() + 28.0, card_rect.top() + 34.0), vec2(logo_size, logo_size));
-    paint_app_logo(p, logo_rect, alpha);
+        let border_color = if t.dark { Color32::from_white_alpha((28.0 * alpha) as u8) } else { Color32::from_black_alpha((20.0 * alpha) as u8) };
+        p.rect_stroke(card_rect, CornerRadius::same(12), Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
 
-    // 4. Content (right side of card)
-    let content_left = card_rect.left() + 124.0;
-    let content_w = (card_rect.right() - content_left - 28.0).max(100.0);
+        // 3. GridCraft App Logo (left side of card)
+        let logo_size = 76.0;
+        let logo_rect = Rect::from_min_size(pos2(card_rect.left() + 28.0, card_rect.top() + 34.0), vec2(logo_size, logo_size));
+        paint_app_logo(p, logo_rect, alpha);
 
-    // Title: "GridCraft"
-    let title_color = if t.dark { Color32::from_rgb(0x5C, 0xC5, 0x87) } else { Color32::from_rgb(0x10, 0x7C, 0x41) };
-    p.text(pos2(content_left, card_rect.top() + 38.0), egui::Align2::LEFT_TOP, "GridCraft", theme::ui_bold(26.0), apply_alpha(title_color, alpha));
+        // 4. Content (right side of card)
+        let content_left = card_rect.left() + 124.0;
+        let content_w = (card_rect.right() - content_left - 28.0).max(100.0);
 
-    // Subtitle
-    p.text(
-        pos2(content_left, card_rect.top() + 72.0),
-        egui::Align2::LEFT_TOP,
-        "Clean-room, native spreadsheet",
-        theme::ui_font(12.5),
-        apply_alpha(t.text_dim, alpha),
-    );
+        // Title: "GridCraft"
+        let title_color = if t.dark { Color32::from_rgb(0x5C, 0xC5, 0x87) } else { Color32::from_rgb(0x10, 0x7C, 0x41) };
+        p.text(
+            pos2(content_left, card_rect.top() + 38.0),
+            egui::Align2::LEFT_TOP,
+            "GridCraft",
+            theme::ui_bold(26.0),
+            apply_alpha(title_color, alpha),
+        );
 
-    // Indeterminate Progress Bar
-    let track_rect = Rect::from_min_size(pos2(content_left, card_rect.top() + 112.0), vec2(content_w, 4.0));
-    let track_bg = if t.dark { Color32::from_rgb(0x40, 0x40, 0x40) } else { Color32::from_rgb(0xE0, 0xE0, 0xE0) };
-    p.rect_filled(track_rect, CornerRadius::same(2), apply_alpha(track_bg, alpha));
+        // Subtitle
+        p.text(
+            pos2(content_left, card_rect.top() + 72.0),
+            egui::Align2::LEFT_TOP,
+            "Clean-room, native spreadsheet",
+            theme::ui_font(12.5),
+            apply_alpha(t.text_dim, alpha),
+        );
 
-    // Smooth indeterminate animation
-    let elapsed = ((now - splash.start_ms).max(0.0) / 1000.0) as f32;
-    let bar_w = (content_w * 0.35).clamp(40.0, 90.0);
-    // Smooth oscillating progress between 0.0 and 1.0
-    let phase = (0.5 - 0.5 * (elapsed * std::f32::consts::PI * 1.1).cos()).clamp(0.0, 1.0);
-    let bar_left = track_rect.left() + phase * (content_w - bar_w);
-    let bar_rect = Rect::from_min_size(pos2(bar_left, track_rect.top()), vec2(bar_w, 4.0));
-    let accent_bar = if t.dark { Color32::from_rgb(0x5C, 0xC5, 0x87) } else { Color32::from_rgb(0x10, 0x7C, 0x41) };
-    p.rect_filled(bar_rect, CornerRadius::same(2), apply_alpha(accent_bar, alpha));
+        // Indeterminate Progress Bar
+        let track_rect = Rect::from_min_size(pos2(content_left, card_rect.top() + 112.0), vec2(content_w, 4.0));
+        let track_bg = if t.dark { Color32::from_rgb(0x40, 0x40, 0x40) } else { Color32::from_rgb(0xE0, 0xE0, 0xE0) };
+        p.rect_filled(track_rect, CornerRadius::same(2), apply_alpha(track_bg, alpha));
 
-    // Status text
-    p.text(pos2(content_left, card_rect.top() + 128.0), egui::Align2::LEFT_TOP, &splash.status, theme::ui_font(12.0), apply_alpha(t.text_dim, alpha));
+        // Smooth indeterminate animation
+        let elapsed = ((now - splash.start_ms).max(0.0) / 1000.0) as f32;
+        let bar_w = (content_w * 0.35).clamp(40.0, 90.0);
+        // Smooth oscillating progress between 0.0 and 1.0
+        let phase = (0.5 - 0.5 * (elapsed * std::f32::consts::PI * 1.1).cos()).clamp(0.0, 1.0);
+        let bar_left = track_rect.left() + phase * (content_w - bar_w);
+        let bar_rect = Rect::from_min_size(pos2(bar_left, track_rect.top()), vec2(bar_w, 4.0));
+        let accent_bar = if t.dark { Color32::from_rgb(0x5C, 0xC5, 0x87) } else { Color32::from_rgb(0x10, 0x7C, 0x41) };
+        p.rect_filled(bar_rect, CornerRadius::same(2), apply_alpha(accent_bar, alpha));
 
-    // Hint at bottom center of card
-    p.text(
-        pos2(card_rect.center().x, card_rect.bottom() - 18.0),
-        egui::Align2::CENTER_CENTER,
-        "Click or press any key to continue",
-        theme::ui_font(10.5),
-        apply_alpha(t.text_disabled, alpha * 0.75),
-    );
+        // Status text
+        p.text(
+            pos2(content_left, card_rect.top() + 128.0),
+            egui::Align2::LEFT_TOP,
+            &splash.status,
+            theme::ui_font(12.0),
+            apply_alpha(t.text_dim, alpha),
+        );
+
+        // Hint at bottom center of card
+        p.text(
+            pos2(card_rect.center().x, card_rect.bottom() - 18.0),
+            egui::Align2::CENTER_CENTER,
+            "Click or press any key to continue",
+            theme::ui_font(10.5),
+            apply_alpha(t.text_disabled, alpha * 0.75),
+        );
+    });
+
+    // Check for user dismiss interaction: pointer click on overlay or a pressed-key event
+    let key_pressed = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })));
+    if clicked || key_pressed {
+        splash.dismiss(now);
+    }
+
+    // Auto-dismiss after min_duration_ms has elapsed
+    if now - splash.start_ms >= splash.min_duration_ms && splash.dismiss_ms.is_none() {
+        splash.dismiss(now);
+    }
 }
 
 #[cfg(test)]

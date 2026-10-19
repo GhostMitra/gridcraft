@@ -140,3 +140,12 @@ html, body {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  #gridcraft_loading {
+    transition: none;
+  }
+  .progress-bar-fill {
+    transition: none;
+  }
+}

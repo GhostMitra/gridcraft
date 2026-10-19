@@ -11,7 +11,7 @@
 </head>
 <body>
   <canvas id="gridcraft_canvas"></canvas>
-  <div id="gridcraft_loading" role="status">
+  <div id="gridcraft_loading">
     <div class="loading-container">
       <div class="logo-box">
         <img src="loading-logo.svg" alt="GridCraft" class="loading-logo">
@@ -23,7 +23,7 @@
           <div id="progress_bar" class="progress-bar-fill"></div>
         </div>
         <div class="progress-labels">
-          <span id="status_msg" class="status-msg">Starting GridCraft&hellip;</span>
+          <span id="status_msg" class="status-msg" role="status">Starting GridCraft&hellip;</span>
           <span id="progress_pct" class="progress-pct">0%</span>
         </div>
       </div>
@@ -34,6 +34,7 @@
       const barEl = document.getElementById("progress_bar");
       const pctEl = document.getElementById("progress_pct");
       const statusEl = document.getElementById("status_msg");
+      const prefersReducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
       let currentPct = 6;
       let targetPct = 20;
@@ -52,11 +53,16 @@
           if (!finished) {
             targetPct = s.pct;
             if (statusEl) statusEl.textContent = s.msg;
+            if (prefersReducedMotion) {
+              currentPct = targetPct;
+              if (barEl) barEl.style.width = currentPct + "%";
+              if (pctEl) pctEl.textContent = currentPct + "%";
+            }
           }
         }, s.afterMs);
       });
 
-      const progressInterval = setInterval(function() {
+      const progressInterval = prefersReducedMotion ? null : setInterval(function() {
         if (!finished && currentPct < targetPct) {
           currentPct += Math.max(1, Math.floor((targetPct - currentPct) * 0.22));
           if (barEl) barEl.style.width = currentPct + "%";
@@ -66,7 +72,7 @@
 
       window.gridcraftFinishLoading = function() {
         finished = true;
-        clearInterval(progressInterval);
+        if (progressInterval) clearInterval(progressInterval);
         if (barEl) barEl.style.width = "100%";
         if (pctEl) pctEl.textContent = "100%";
         if (statusEl) statusEl.textContent = "Ready";

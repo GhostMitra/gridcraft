@@ -9,12 +9,105 @@
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #f3f3f3; }
     #gridcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-    #gridcraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      color: #555; font: 14px system-ui, sans-serif; pointer-events: none; }
+    .splash-screen {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: #f3f3f3; z-index: 10; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      transition: opacity 0.3s ease-out;
+    }
+    .splash-screen.fade-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .splash-card {
+      display: flex; align-items: center; gap: 24px; padding: 32px 36px;
+      background: #ffffff; border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.05);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      max-width: 480px; width: 90%;
+    }
+    .splash-logo svg {
+      display: block; border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(31, 157, 85, 0.25);
+    }
+    .splash-content {
+      flex: 1; min-width: 0;
+    }
+    .splash-title {
+      margin: 0; font-size: 26px; font-weight: 700; color: #107c41; letter-spacing: -0.5px;
+    }
+    .splash-subtitle {
+      margin-top: 2px; font-size: 13px; color: #616161; font-weight: 400;
+    }
+    .splash-progress {
+      margin-top: 18px; width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden; position: relative;
+    }
+    .splash-progress-bar {
+      position: absolute; top: 0; bottom: 0; width: 40%; background: #107c41; border-radius: 2px;
+      animation: splash-indeterminate 1.4s ease-in-out infinite;
+    }
+    .splash-status {
+      margin-top: 10px; font-size: 12px; color: #757575;
+    }
+    @keyframes splash-indeterminate {
+      0% { left: -40%; }
+      50% { left: 40%; width: 50%; }
+      100% { left: 100%; width: 40%; }
+    }
+    @media (prefers-color-scheme: dark) {
+      html, body { background: #202020; }
+      .splash-screen { background: #202020; }
+      .splash-card {
+        background: #2b2b2b; border-color: rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      }
+      .splash-title { color: #5cc587; }
+      .splash-subtitle { color: #b0b0b0; }
+      .splash-progress { background: #3d3d3d; }
+      .splash-progress-bar { background: #5cc587; }
+      .splash-status { color: #9e9e9e; }
+    }
   </style>
 </head>
 <body>
   <canvas id="gridcraft_canvas"></canvas>
-  <div id="gridcraft_loading">Loading GridCraft&hellip;</div>
+  <div id="gridcraft_loading" class="splash-screen">
+    <div class="splash-card">
+      <div class="splash-logo">
+        <svg viewBox="0 0 512 512" width="76" height="76" aria-label="GridCraft Logo">
+          <defs>
+            <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+          </defs>
+          <g clip-path="url(#tile)">
+            <rect width="512" height="512" fill="#1f9d55"/>
+            <g transform="rotate(-6 256 268)" stroke="#0b0b0c" stroke-linejoin="round" stroke-linecap="round">
+              <!-- page with a folded top-right corner -->
+              <path d="M112 76 H336 L404 144 V440 H112 Z" fill="#efe9dc" stroke-width="14"/>
+              <path d="M336 76 V144 H404" fill="none" stroke-width="12"/>
+              <!-- title lines -->
+              <path d="M146 106 H272 M146 130 H232" stroke-width="12"/>
+              <!-- header row and row-number column -->
+              <path d="M112 164 H404 V204 H164 V440 H112 Z" fill="#1f9d55" stroke="none"/>
+              <!-- grid lines -->
+              <path d="M112 164 H404 M112 204 H404 M112 250 H404 M112 296 H404 M112 342 H404 M112 388 H404
+                       M164 164 V440 M244 164 V440 M324 164 V440" fill="none" stroke-width="8"/>
+              <!-- selected cell and handle -->
+              <rect x="244" y="250" width="80" height="46" fill="none" stroke-width="16"/>
+              <rect x="312" y="284" width="24" height="24" fill="#0b0b0c" stroke="#efe9dc" stroke-width="5"/>
+              <!-- double rule -->
+              <path d="M252 410 H316 M252 424 H316" stroke-width="7"/>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <div class="splash-content">
+        <h1 class="splash-title">GridCraft</h1>
+        <div class="splash-subtitle">Clean-room, native spreadsheet</div>
+        <div class="splash-progress">
+          <div class="splash-progress-bar"></div>
+        </div>
+        <div class="splash-status" id="gridcraft_status">Starting GridCraft&hellip;</div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

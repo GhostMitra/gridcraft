@@ -29,6 +29,7 @@ pub mod pivot_pane;
 pub mod printing;
 pub mod ribbon;
 pub mod selection_glide;
+pub mod splash;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
@@ -263,6 +264,8 @@ pub struct SheetApp {
     /// holding other text. Once the cut has been pasted, Paste leaves this text alone.
     cut_text: Option<String>,
     pub started: f64,
+    /// Initial application splash loading screen, if active.
+    pub splash: Option<splash::SplashState>,
 }
 
 impl SheetApp {
@@ -306,6 +309,28 @@ impl SheetApp {
             clipboard_text_at_copy: None,
             cut_text: None,
             started: now_ms(),
+            splash: None,
+        }
+    }
+
+    /// Enables the application splash loading screen on initial startup unless `GRIDCRAFT_NO_SPLASH` is set.
+    pub fn enable_splash(&mut self) {
+        if std::env::var_os("GRIDCRAFT_NO_SPLASH").is_none() {
+            self.splash = Some(splash::SplashState::new());
+        }
+    }
+
+    /// Sets the status message displayed on the splash screen.
+    pub fn set_splash_status(&mut self, status: impl Into<String>) {
+        if let Some(splash) = &mut self.splash {
+            splash.set_status(status);
+        }
+    }
+
+    /// Dismisses the splash loading screen, beginning its smooth fade-out.
+    pub fn dismiss_splash(&mut self) {
+        if let Some(splash) = &mut self.splash {
+            splash.dismiss(now_ms());
         }
     }
 
@@ -1133,6 +1158,7 @@ impl SheetApp {
         widgets::toast(self, &ctx);
         control::issue_screenshots(self, &ctx);
         control::collect_screenshots(self, &ctx);
+        splash::show(self, ui);
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.
         }

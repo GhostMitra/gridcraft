@@ -48,6 +48,9 @@ pub fn start() {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
                     }
                     let mut app = SheetApp::new(session, services);
+                    if !query().contains("no-splash") {
+                        app.enable_splash();
+                    }
                     app.ui.system_theme = true;
                     // Follow the browser's language, except a CJK one: the web build has no system
                     // CJK fonts (none are bundled), so that interface would render as tofu.
@@ -74,8 +77,29 @@ pub fn start() {
         }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
-                Ok(()) => el.remove(),
-                Err(e) => el.set_inner_html(&format!("<p>GridCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+                Ok(()) => {
+                    el.set_class_name("splash-screen fade-out");
+                    let el_clone = el.clone();
+                    let cb = wasm_bindgen::closure::Closure::once(move || {
+                        el_clone.remove();
+                    });
+                    if let Some(w) = web_sys::window() {
+                        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 350);
+                        cb.forget();
+                    } else {
+                        el.remove();
+                    }
+                }
+                Err(e) => {
+                    el.set_inner_html(&format!(
+                        "<div class='splash-card' style='border-color: #c42b1c;'>\
+                         <div class='splash-content'>\
+                         <h1 class='splash-title' style='color: #c42b1c;'>GridCraft failed to start</h1>\
+                         <div class='splash-subtitle' style='margin-top: 8px;'>{e:?}</div>\
+                         <div class='splash-status' style='margin-top: 12px;'>A browser with WebGPU or WebGL2 is required.</div>\
+                         </div></div>"
+                    ));
+                }
             }
         }
     });
@@ -274,7 +298,6 @@ fn mime_for(name: &str) -> &'static str {
 }
 
 /// Trigger a browser save dialog or download of `bytes` named after `name`.
-
 fn download(name: &str, bytes: &[u8]) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
     let window = web_sys::window().ok_or("no window")?;

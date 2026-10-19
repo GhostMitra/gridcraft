@@ -183,6 +183,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     out.page = Some(page);
                 }
             }
+            if let Some(offer) = crate::install::offered(app) {
+                let clicked = nav_item(ui, Icon::Download, lang.tr("Install app…"), false, nav_text, nav_sel).clicked();
+                if clicked {
+                    crate::install::start(app, offer);
+                    out.close = true;
+                }
+            }
             if nav_item(ui, Icon::Close, lang.tr("Close"), false, nav_text, nav_sel).clicked() {
                 // A cell still being edited is part of the workbook; Close keeps the unsaved prompt.
                 if app.commit_edit(0, 0, false, false) {
@@ -411,6 +418,7 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
 
 /// What the file system said about a recent workbook.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)]
 enum Modified {
     /// When it was last changed, in seconds since 1970.
     At(f64),
@@ -562,9 +570,85 @@ fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outc
             out.close = true;
         }
     }
+    browser_storage_list(app, ui, out);
     ui.add_space(22.0);
     section(ui, lang, "Recent");
     recent_list(app, ui, bs, out, usize::MAX);
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn browser_storage_list(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
+    let Some(storage) = app.services.storage.clone() else { return };
+    let lang = app.ui.language;
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(22.0);
+    section(ui, lang, "Browser Storage (Offline)");
+    let workbooks = storage.list();
+    if workbooks.is_empty() {
+        dim(ui, lang.tr("No workbooks saved in browser storage yet."));
+        return;
+    }
+    let width = ui.available_width().min(CONTENT_W);
+    let mut to_delete = None;
+    let mut to_open = None;
+    for wb in workbooks {
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &wb.name));
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(rect, 4.0, t.hover);
+        }
+        icons::paint(p, Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0)), Icon::Book, t.text);
+        let room = rect.right() - 170.0;
+        let text = p.with_clip_rect(Rect::from_min_max(rect.min, pos2(room, rect.bottom())).intersect(p.clip_rect()));
+        text.text(pos2(rect.left() + 42.0, rect.center().y - 8.0), Align2::LEFT_CENTER, &wb.name, theme::ui_font(13.5), t.text);
+        let size_str = format_bytes(wb.size);
+        text.text(pos2(rect.left() + 42.0, rect.center().y + 9.0), Align2::LEFT_CENTER, &size_str, theme::ui_font(11.5), t.text_dim);
+        if wb.modified > 0.0 {
+            let now = crate::now_ms() / 1000.0;
+            p.text(
+                pos2(rect.right() - 160.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                age(lang, now - wb.modified / 1000.0),
+                theme::ui_font(12.0),
+                t.text_dim,
+            );
+        }
+        let del_rect = Rect::from_center_size(pos2(rect.right() - 20.0, rect.center().y), vec2(24.0, 24.0));
+        let del_resp = ui.interact(del_rect, ui.id().with(("del_storage_wb", &wb.name)), Sense::click());
+        if del_resp.hovered() {
+            p.rect_filled(del_rect, 4.0, t.hover);
+        }
+        icons::paint(p, Rect::from_center_size(del_rect.center(), vec2(16.0, 16.0)), Icon::Close, t.text_dim);
+        if del_resp.clicked() {
+            to_delete = Some(wb.name.clone());
+        } else if resp.clicked() {
+            to_open = Some(wb.name.clone());
+        }
+    }
+    if let Some(name) = to_delete {
+        let _ = storage.delete(&name);
+    }
+    if let Some(name) = to_open {
+        match storage.read(&name) {
+            Ok(bytes) => {
+                if let Some(inbox) = &app.services.inbox {
+                    inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
+                    out.close = true;
+                }
+            }
+            Err(e) => app.toast = Some((format!("Failed to open: {e}"), crate::now_ms())),
+        }
+    }
 }
 
 /// Review › Protect Workbook and File › Info › Protect Workbook: the protect dialog (with an
@@ -672,18 +756,35 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     // Desktop: the system Save dialog. Web: the file downloads.
     let web = app.services.pick_save.is_none() && app.services.download.is_some();
     let label = if web { format!("{} (.{fmt})", lang.tr("Download")) } else { lang.tr("Browse…").to_string() };
-    if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
-        if fmt == "xlsx" {
-            let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
-            app.open_dialog("saveAs", json!({}));
-            let after = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
-            if after != before || app.services.pick_save.is_none() {
+    ui.horizontal(|ui| {
+        if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
+            if fmt == "xlsx" {
+                let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
+                app.open_dialog("saveAs", json!({}));
+                let after = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
+                if after != before || app.services.pick_save.is_none() {
+                    out.close = true;
+                }
+            } else if export_as(app, fmt) {
                 out.close = true;
             }
-        } else if export_as(app, fmt) {
-            out.close = true;
         }
-    }
+        if let Some(storage) = app.services.storage.clone() {
+            ui.add_space(14.0);
+            if square_button(ui, Icon::Save, lang.tr("Save locally")).clicked() && app.commit_edit(0, 0, false, false) {
+                match app.get_workbook_bytes(fmt) {
+                    Ok((name, bytes)) => match storage.save(&name, &bytes) {
+                        Ok(()) => {
+                            app.toast = Some((format!("Saved {name} to browser storage"), crate::now_ms()));
+                            out.close = true;
+                        }
+                        Err(e) => app.toast = Some((format!("Failed to save: {e}"), crate::now_ms())),
+                    },
+                    Err(e) => app.toast = Some((format!("Failed to encode: {e}"), crate::now_ms())),
+                }
+            }
+        }
+    });
     ui.add_space(18.0);
     dim(ui, lang.tr("A CSV file, web page or PDF is a copy: the workbook keeps its own file."));
 }

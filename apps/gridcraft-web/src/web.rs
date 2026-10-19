@@ -1,6 +1,7 @@
 //! The browser shell: web `Services`, drag-and-drop, and the eframe web runner.
 
 use gridcraft_engine::Session;
+use gridcraft_ui_egui::storage::LocalStorageService;
 use gridcraft_ui_egui::{Inbox, Services, SheetApp};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::JsValue;
@@ -43,7 +44,9 @@ pub fn start() {
                     } else if q.contains("sample") {
                         let _ = session.execute("file.new", serde_json::json!({"sample": "sales"}));
                     }
-                    let mut services = services(inbox.clone(), cc.egui_ctx.clone());
+                    let web_storage = crate::storage::WebStorage::new();
+                    crate::storage::init(web_storage.clone(), cc.egui_ctx.clone());
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone(), web_storage.clone());
                     if let Some(bridge) = &app_bridge {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
                     }
@@ -65,7 +68,7 @@ pub fn start() {
                         }
                         bridge.post_ready();
                     }
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, storage: web_storage, last_autosave: 0.0, recovery_checked: false }))
                 }),
             )
             .await;
@@ -93,10 +96,38 @@ struct WebShell {
     app: SheetApp,
     inbox: Inbox,
     bridge: Option<crate::host::Bridge>,
+    storage: std::sync::Arc<crate::storage::WebStorage>,
+    last_autosave: f64,
+    recovery_checked: bool,
 }
 
 impl eframe::App for WebShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.recovery_checked {
+            if let Some((name, bytes)) = self.storage.take_recovery() {
+                if self.bridge.is_none() && !query().contains("sample") {
+                    self.inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name.clone(), bytes));
+                    self.app.toast = Some((format!("Recovered unsaved workbook ({name})"), gridcraft_ui_egui::now_ms()));
+                    ctx.request_repaint();
+                }
+            }
+            self.recovery_checked = true;
+        }
+
+        let now = gridcraft_ui_egui::now_ms();
+        if self.app.session.active().is_some_and(|d| d.is_dirty()) {
+            if now - self.last_autosave > 3000.0 {
+                let title = self.app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1.xlsx".into());
+                if let Ok((_, bytes)) = self.app.get_workbook_bytes("xlsx") {
+                    self.storage.autosave(&title, &bytes);
+                    self.last_autosave = now;
+                }
+            }
+        } else if self.app.session.active().is_some_and(|d| !d.is_dirty()) && self.last_autosave > 0.0 {
+            self.storage.clear_recovery();
+            self.last_autosave = 0.0;
+        }
+
         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
         for f in dropped {
             let inbox = self.inbox.clone();
@@ -127,9 +158,10 @@ impl eframe::App for WebShell {
     }
 }
 
-fn services(inbox: Inbox, ctx: egui::Context) -> Services {
+fn services(inbox: Inbox, ctx: egui::Context, storage: std::sync::Arc<crate::storage::WebStorage>) -> Services {
     let open_inbox = inbox.clone();
     let picture_ctx = ctx.clone();
+    let install_app = crate::install::service(&ctx);
     Services {
         copy_html: Some(Box::new(copy_html)),
         open_async: Some(Box::new(move || {
@@ -177,6 +209,8 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             }
         })),
         inbox: Some(inbox),
+        install_app: Some(install_app),
+        storage: Some(storage),
         ..Default::default()
     }
 }

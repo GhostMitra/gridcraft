@@ -4530,6 +4530,7 @@ version = "0.8.0"
 dependencies = [
  "gridcraft-engine",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

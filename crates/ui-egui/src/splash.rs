@@ -354,4 +354,51 @@ mod tests {
         splash.set_status("Opening Sales.xlsx…");
         assert_eq!(splash.status, "Opening Sales.xlsx…");
     }
+
+    #[test]
+    fn splash_active_returns_early_in_ui() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.enable_splash();
+        let ctx = egui::Context::default();
+        app.logic(&ctx);
+        app.logic(&ctx);
+        assert!(app.splash.is_some());
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            app.ui(ui);
+        });
+        output.textures_delta.clear();
+
+        assert!(app.splash.is_some());
+        assert_eq!(app.perf.grid_ms, 0.0);
+    }
+
+    #[test]
+    fn splash_dismissal_on_keypress() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.enable_splash();
+        let ctx = egui::Context::default();
+        app.logic(&ctx);
+        app.logic(&ctx);
+        let mut raw_input = egui::RawInput::default();
+        raw_input.events.push(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        });
+
+        let mut output = ctx.run_ui(raw_input, |ui| {
+            app.ui(ui);
+        });
+        output.textures_delta.clear();
+
+        let splash = app.splash.as_ref().expect("splash still present during fade");
+        assert!(splash.dismiss_ms.is_some());
+        assert_eq!(app.perf.grid_ms, 0.0);
+    }
 }

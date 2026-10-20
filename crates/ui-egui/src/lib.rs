@@ -1128,6 +1128,10 @@ impl SheetApp {
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
         let t = theme::Tokens::get(&ctx);
+        splash::show(self, ui);
+        if self.splash.is_some() {
+            return;
+        }
         if self.backstage.is_none() {
             self.ribbon_keys(&ctx);
         }
@@ -1158,7 +1162,6 @@ impl SheetApp {
         widgets::toast(self, &ctx);
         control::issue_screenshots(self, &ctx);
         control::collect_screenshots(self, &ctx);
-        splash::show(self, ui);
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.
         }

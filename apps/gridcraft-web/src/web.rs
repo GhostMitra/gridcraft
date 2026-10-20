@@ -16,6 +16,15 @@ const LOADING_FADE_MS: i32 = 300;
 
 /// Take the loading screen away once the animation has played to the finished mark: wait out
 /// what is left of `LOADING_MIN_MS`, finish progress, fade it, then remove it.
+fn finish_loading() {
+    if let Some(w) = web_sys::window()
+        && let Ok(finish_val) = js_sys::Reflect::get(&w, &JsValue::from_str("gridcraftFinishLoading"))
+        && let Ok(func) = finish_val.dyn_into::<js_sys::Function>()
+    {
+        let _ = func.call0(&w);
+    }
+}
+
 fn dismiss_loading(el: web_sys::Element) {
     let Some(window) = web_sys::window() else {
         el.remove();
@@ -26,12 +35,7 @@ fn dismiss_loading(el: web_sys::Element) {
 
     let finish_delay = (wait - 150).max(0);
     let finish = wasm_bindgen::closure::Closure::once_into_js(move || {
-        if let Some(w) = web_sys::window()
-            && let Ok(finish_val) = js_sys::Reflect::get(&w, &JsValue::from_str("gridcraftFinishLoading"))
-            && let Ok(func) = finish_val.dyn_into::<js_sys::Function>()
-        {
-            let _ = func.call0(&w);
-        }
+        finish_loading();
     });
     let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(finish.unchecked_ref(), finish_delay);
 
@@ -113,6 +117,7 @@ pub fn start() {
             match result {
                 Ok(()) => dismiss_loading(el),
                 Err(e) => {
+                    finish_loading();
                     el.set_inner_html(&format!("<p>GridCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>"));
                 }
             }

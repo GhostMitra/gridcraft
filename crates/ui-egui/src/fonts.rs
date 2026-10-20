@@ -799,6 +799,7 @@ mod tests {
     /// Tests that family_combo_items returns cached items matching families().
     #[test]
     fn family_combo_items_matches_families() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let fams = families();
         let items = family_combo_items();
         assert_eq!(fams.len(), items.len());

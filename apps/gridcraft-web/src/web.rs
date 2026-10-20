@@ -108,12 +108,13 @@ impl eframe::App for WebShell {
         }
 
         if !self.recovery_checked && self.storage.is_ready() {
-            if let Some((name, bytes)) = self.storage.take_recovery() {
-                if self.bridge.is_none() && !query().contains("sample") {
-                    self.inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name.clone(), bytes));
-                    self.app.toast = Some((format!("Recovered unsaved workbook ({name})"), gridcraft_ui_egui::now_ms()));
-                    ctx.request_repaint();
-                }
+            if let Some((name, bytes)) = self.storage.take_recovery()
+                && self.bridge.is_none()
+                && !query().contains("sample")
+            {
+                self.inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name.clone(), bytes));
+                self.app.toast = Some((format!("Recovered unsaved workbook ({name})"), gridcraft_ui_egui::now_ms()));
+                ctx.request_repaint();
             }
             self.recovery_checked = true;
         }
@@ -315,7 +316,6 @@ fn mime_for(name: &str) -> &'static str {
 }
 
 /// Trigger a browser save dialog or download of `bytes` named after `name`.
-
 fn download(name: &str, bytes: &[u8]) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
     let window = web_sys::window().ok_or("no window")?;

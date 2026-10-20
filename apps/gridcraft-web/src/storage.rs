@@ -5,7 +5,7 @@
 //! Keeps continuous autosave recovery in `recovery.xlsx` + `recovery.json` (or `gridcraft.recovery.*`),
 //! enabling recovery after unexpected page reloads or browser restarts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -96,6 +96,17 @@ async fn remove_opfs(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+enum RecoveryOp {
+    Save { bytes: Vec<u8>, meta: String },
+    Clear,
+}
+
+#[derive(Default)]
+struct RecoveryQueue {
+    queue: VecDeque<RecoveryOp>,
+    active: bool,
+}
+
 pub struct WebStorage {
     entries: Arc<Mutex<Vec<StoredWorkbook>>>,
     cache: Arc<Mutex<HashMap<String, Vec<u8>>>>,
@@ -103,6 +114,7 @@ pub struct WebStorage {
     pending_error: Arc<Mutex<Option<String>>>,
     fallback: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
+    recovery_queue: Arc<Mutex<RecoveryQueue>>,
 }
 
 impl WebStorage {
@@ -114,18 +126,80 @@ impl WebStorage {
             pending_error: Arc::new(Mutex::new(None)),
             fallback: Arc::new(AtomicBool::new(false)),
             ready: Arc::new(AtomicBool::new(false)),
+            recovery_queue: Arc::new(Mutex::new(RecoveryQueue::default())),
         })
     }
 
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::Relaxed)
     }
+
+    fn enqueue_recovery(&self, op: RecoveryOp) {
+        let mut state = self.recovery_queue.lock().unwrap_or_else(PoisonError::into_inner);
+        state.queue.push_back(op);
+        if !state.active {
+            state.active = true;
+            let queue = self.recovery_queue.clone();
+            let fallback_flag = self.fallback.clone();
+            let pending_error = self.pending_error.clone();
+            spawn_local(async move {
+                loop {
+                    let next_op = {
+                        let mut state = queue.lock().unwrap_or_else(PoisonError::into_inner);
+                        match state.queue.pop_front() {
+                            Some(op) => op,
+                            None => {
+                                state.active = false;
+                                break;
+                            }
+                        }
+                    };
+                    let fallback = fallback_flag.load(Ordering::Relaxed);
+                    match next_op {
+                        RecoveryOp::Save { bytes, meta } => {
+                            if fallback {
+                                match local() {
+                                    Ok(st) => {
+                                        if let Err(e) = st.set_item(LOCAL_RECOVERY_KEY, &encode(&bytes)) {
+                                            *pending_error.lock().unwrap_or_else(PoisonError::into_inner) =
+                                                Some(format!("Autosave failed: {}", err(e)));
+                                        } else if let Err(e) = st.set_item(LOCAL_RECOVERY_META_KEY, &meta) {
+                                            *pending_error.lock().unwrap_or_else(PoisonError::into_inner) =
+                                                Some(format!("Autosave failed: {}", err(e)));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        *pending_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("Autosave failed: {e}"));
+                                    }
+                                }
+                            } else if let Err(e) = write_opfs(RECOVERY_NAME, &bytes).await {
+                                *pending_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("Autosave failed: {e}"));
+                            } else if let Err(e) = write_opfs(RECOVERY_META_NAME, meta.as_bytes()).await {
+                                *pending_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("Autosave failed: {e}"));
+                            }
+                        }
+                        RecoveryOp::Clear => {
+                            if fallback {
+                                if let Ok(st) = local() {
+                                    let _ = st.remove_item(LOCAL_RECOVERY_KEY);
+                                    let _ = st.remove_item(LOCAL_RECOVERY_META_KEY);
+                                }
+                            } else {
+                                let _ = remove_opfs(RECOVERY_NAME).await;
+                                let _ = remove_opfs(RECOVERY_META_NAME).await;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
 }
 
 impl LocalStorageService for WebStorage {
     fn list(&self) -> Vec<StoredWorkbook> {
         let mut list = self.entries.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        list.sort_by_key(|a| a.name.to_lowercase());
         list
     }
 
@@ -221,39 +295,17 @@ impl LocalStorageService for WebStorage {
         let name = name.to_string();
         let bytes_vec = bytes.to_vec();
         *self.recovery.lock().unwrap_or_else(PoisonError::into_inner) = Some((name.clone(), bytes_vec.clone()));
-        let fallback = self.fallback.load(Ordering::Relaxed);
         let meta = serde_json::json!({
             "name": name,
             "modified": js_sys::Date::now(),
         })
         .to_string();
-        spawn_local(async move {
-            if fallback {
-                if let Ok(st) = local() {
-                    let _ = st.set_item(LOCAL_RECOVERY_KEY, &encode(&bytes_vec));
-                    let _ = st.set_item(LOCAL_RECOVERY_META_KEY, &meta);
-                }
-            } else {
-                let _ = write_opfs(RECOVERY_NAME, &bytes_vec).await;
-                let _ = write_opfs(RECOVERY_META_NAME, meta.as_bytes()).await;
-            }
-        });
+        self.enqueue_recovery(RecoveryOp::Save { bytes: bytes_vec, meta });
     }
 
     fn clear_recovery(&self) {
         *self.recovery.lock().unwrap_or_else(PoisonError::into_inner) = None;
-        let fallback = self.fallback.load(Ordering::Relaxed);
-        spawn_local(async move {
-            if fallback {
-                if let Ok(st) = local() {
-                    let _ = st.remove_item(LOCAL_RECOVERY_KEY);
-                    let _ = st.remove_item(LOCAL_RECOVERY_META_KEY);
-                }
-            } else {
-                let _ = remove_opfs(RECOVERY_NAME).await;
-                let _ = remove_opfs(RECOVERY_META_NAME).await;
-            }
-        });
+        self.enqueue_recovery(RecoveryOp::Clear);
     }
 
     fn take_recovery(&self) -> Option<(String, Vec<u8>)> {
@@ -275,12 +327,12 @@ impl LocalStorageService for WebStorage {
 
 /// Ask browser for persistent storage quota and preload all stored files into memory.
 pub fn init(storage: Arc<WebStorage>, ctx: egui::Context) {
-    if let Some(sm) = storage_manager().filter(|sm| has_method(sm, "persist")) {
-        if let Ok(persist_prom) = sm.persist() {
-            spawn_local(async move {
-                let _ = JsFuture::from(persist_prom).await;
-            });
-        }
+    if let Some(sm) = storage_manager().filter(|sm| has_method(sm, "persist"))
+        && let Ok(persist_prom) = sm.persist()
+    {
+        spawn_local(async move {
+            let _ = JsFuture::from(persist_prom).await;
+        });
     }
 
     let storage_clone = storage.clone();
@@ -318,10 +370,10 @@ pub fn init(storage: Arc<WebStorage>, ctx: egui::Context) {
                             if name == RECOVERY_NAME {
                                 recovery_bytes = Some(bytes);
                             } else if name == RECOVERY_META_NAME {
-                                if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                                    if let Some(n) = meta.get("name").and_then(|v| v.as_str()) {
-                                        recovery_title = n.to_string();
-                                    }
+                                if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                                    && let Some(n) = meta.get("name").and_then(|v| v.as_str())
+                                {
+                                    recovery_title = n.to_string();
                                 }
                             } else {
                                 entries.push(StoredWorkbook { name: name.clone(), size: bytes.len() as u64, modified });
@@ -345,24 +397,22 @@ pub fn init(storage: Arc<WebStorage>, ctx: egui::Context) {
                     let mut cache = HashMap::new();
                     let len = st.length().unwrap_or(0).min(10_000);
                     for i in 0..len {
-                        if let Ok(Some(k)) = st.key(i) {
-                            if let Some(name) = k.strip_prefix(LOCAL_PREFIX) {
-                                if let Ok(Some(val)) = st.get_item(&k) {
-                                    let bytes = decode(&val);
-                                    entries.push(StoredWorkbook { name: name.to_string(), size: bytes.len() as u64, modified: 0.0 });
-                                    cache.insert(name.to_string(), bytes);
-                                }
-                            }
+                        if let Ok(Some(k)) = st.key(i)
+                            && let Some(name) = k.strip_prefix(LOCAL_PREFIX)
+                            && let Ok(Some(val)) = st.get_item(&k)
+                        {
+                            let bytes = decode(&val);
+                            entries.push(StoredWorkbook { name: name.to_string(), size: bytes.len() as u64, modified: 0.0 });
+                            cache.insert(name.to_string(), bytes);
                         }
                     }
                     if let Ok(Some(rec_val)) = st.get_item(LOCAL_RECOVERY_KEY) {
                         let mut name = "Untitled.xlsx".to_string();
-                        if let Ok(Some(meta_val)) = st.get_item(LOCAL_RECOVERY_META_KEY) {
-                            if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_val) {
-                                if let Some(n) = meta.get("name").and_then(|v| v.as_str()) {
-                                    name = n.to_string();
-                                }
-                            }
+                        if let Ok(Some(meta_val)) = st.get_item(LOCAL_RECOVERY_META_KEY)
+                            && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_val)
+                            && let Some(n) = meta.get("name").and_then(|v| v.as_str())
+                        {
+                            name = n.to_string();
                         }
                         *storage_clone.recovery.lock().unwrap_or_else(PoisonError::into_inner) = Some((name, decode(&rec_val)));
                     }

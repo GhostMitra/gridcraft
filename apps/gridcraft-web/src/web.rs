@@ -119,7 +119,7 @@ impl eframe::App for WebShell {
         }
 
         let now = gridcraft_ui_egui::now_ms();
-        if self.bridge.is_none() && self.storage.is_ready() {
+        if self.bridge.is_none() && self.storage.is_ready() && !query().contains("sample") {
             let any_dirty = self.app.session.documents().iter().any(|d| d.is_dirty());
             if self.app.session.active().is_some_and(|d| d.is_dirty()) {
                 if now - self.last_autosave > 3000.0 {
